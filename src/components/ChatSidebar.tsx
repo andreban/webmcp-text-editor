@@ -60,7 +60,7 @@ function WorkspaceApprovalCard({
         <Button size="sm" onClick={approval.approve}>
           Approve
         </Button>
-        <Button size="sm" variant="outline" onClick={approval.reject}>
+        <Button size="sm" variant="outline" onClick={() => approval.reject()}>
           Reject
         </Button>
       </div>
@@ -81,7 +81,6 @@ function renderApprovalWithDocs(docs: { id: string; title: string }[]) {
         entry={entry}
         approve={approval.approve}
         reject={approval.reject}
-        respondWith={approval.respondWith}
       />
     );
   };
