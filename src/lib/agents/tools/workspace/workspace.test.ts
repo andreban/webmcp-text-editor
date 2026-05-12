@@ -6,6 +6,7 @@ import type { AgentEvent } from "@mast-ai/core";
 import type { WorkspaceContext, EditorLike } from "./context";
 import type { WorkspaceDocument } from "../../../workspace";
 import type { AgentRunnerFactory } from "../..";
+import type { ApprovalRequest } from "../../../store";
 import { GetActiveDocInfoTool } from "./get_active_doc_info";
 import { ListWorkspaceDocsTool } from "./list_workspace_docs";
 import { ReadWorkspaceDocTool } from "./read_workspace_doc";
@@ -50,6 +51,8 @@ function makeCtx(overrides: Partial<WorkspaceContext> = {}): WorkspaceContext {
     saveDocContentFn: vi.fn(),
     editorRef: { current: null },
     editorContentRef: { current: "" },
+    setPendingApprovals: vi.fn(),
+    approveAllRef: { current: true },
     ...overrides,
   };
 }
@@ -158,9 +161,9 @@ describe("QueryWorkspaceDocTool", () => {
   });
 });
 
-// Approval is now a layer above the tool (the library's approval proxy +
-// `onApprovalRequired` in `AgentProviderShim`). These tools assume the call
-// has already been approved and just perform the mutation.
+// In the WebMCP build, the mutating workspace tools self-gate via
+// `requestApproval`. The default mock context sets `approveAllRef.current = true`
+// so calls short-circuit through; an explicit test below verifies rejection.
 
 describe("CreateDocumentTool", () => {
   let createDocumentFn: Mock;
@@ -218,6 +221,31 @@ describe("CreateDocumentTool", () => {
       "new-doc-id",
       expect.anything(),
     );
+  });
+
+  it("queues an approval request and aborts when the user rejects", async () => {
+    let captured: ApprovalRequest | null = null;
+    const setPendingApprovals = (
+      fn: (prev: ApprovalRequest[]) => ApprovalRequest[],
+    ) => {
+      const next = fn([]);
+      if (next[0]) captured = next[0];
+    };
+    const tool = new CreateDocumentTool(
+      makeCtx({
+        createDocumentFn,
+        editorRef: mockEditorRef,
+        approveAllRef: { current: false },
+        setPendingApprovals,
+      }),
+    );
+    const promise = tool.call({ title: "Reject Me" }, {});
+    await Promise.resolve();
+    if (!captured) throw new Error("Approval was not queued");
+    (captured as ApprovalRequest).resolve(false);
+    const result = JSON.parse(await promise);
+    expect(result).toEqual({ error: "Rejected by user" });
+    expect(createDocumentFn).not.toHaveBeenCalled();
   });
 });
 

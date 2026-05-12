@@ -5,7 +5,10 @@ import { describe, it, expect, vi } from "vitest";
 import { createToolRegistry } from "./registries";
 import type { EditorContext } from "./editor/context";
 import type { WorkspaceContext } from "./workspace/context";
+import type { SkillsContext } from "./skills/context";
 import type { AgentRunnerFactory } from "..";
+
+const skillsCtx: SkillsContext = { skillsRef: { current: [] } };
 
 function makeContexts() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -36,6 +39,8 @@ function makeContexts() {
     saveDocContentFn: vi.fn(),
     editorRef: { current: null },
     editorContentRef: { current: "" },
+    setPendingApprovals: vi.fn(),
+    approveAllRef: { current: true },
   };
   return { editorCtx, workspaceCtx };
 }
@@ -43,7 +48,7 @@ function makeContexts() {
 describe("createToolRegistry", () => {
   it("includes all read-only tools", () => {
     const { editorCtx, workspaceCtx } = makeContexts();
-    const registry = createToolRegistry(editorCtx, workspaceCtx);
+    const registry = createToolRegistry(editorCtx, workspaceCtx, skillsCtx);
     const names = registry.getTools().map((d) => d.name);
     expect(names).toContain("read");
     expect(names).toContain("read_selection");
@@ -59,7 +64,7 @@ describe("createToolRegistry", () => {
 
   it("includes edit, write, request_switch_to_editor", () => {
     const { editorCtx, workspaceCtx } = makeContexts();
-    const registry = createToolRegistry(editorCtx, workspaceCtx);
+    const registry = createToolRegistry(editorCtx, workspaceCtx, skillsCtx);
     const names = registry.getTools().map((d) => d.name);
     expect(names).toContain("edit");
     expect(names).toContain("write");
@@ -68,7 +73,7 @@ describe("createToolRegistry", () => {
 
   it("includes workspace write tools", () => {
     const { editorCtx, workspaceCtx } = makeContexts();
-    const registry = createToolRegistry(editorCtx, workspaceCtx);
+    const registry = createToolRegistry(editorCtx, workspaceCtx, skillsCtx);
     const names = registry.getTools().map((d) => d.name);
     expect(names).toContain("create_document");
     expect(names).toContain("rename_document");

@@ -8,8 +8,11 @@ import type { AgentRunnerFactory } from "../../";
 import type { AgentEvent, ToolContext } from "@mast-ai/core";
 import type { EditorContext } from "../editor/context";
 import type { WorkspaceContext } from "../workspace/context";
+import type { SkillsContext } from "../skills/context";
 import { createToolRegistry } from "../registries";
 import type { PlanConfirmationRequest } from "../../../store";
+
+const skillsCtx: SkillsContext = { skillsRef: { current: [] } };
 
 function makeMockStream(
   output: string,
@@ -95,6 +98,8 @@ function makeContexts(
     saveDocContentFn: vi.fn(),
     editorRef: { current: null },
     editorContentRef: { current: "" },
+    setPendingApprovals: vi.fn(),
+    approveAllRef: { current: true },
   };
   return { editorCtx, workspaceCtx };
 }
@@ -113,7 +118,7 @@ describe("registerDelegationTools / invoke_agent", () => {
     registerDelegationTools(
       registry,
       factory,
-      createToolRegistry(editorCtx, workspaceCtx).readOnly(),
+      createToolRegistry(editorCtx, workspaceCtx, skillsCtx).readOnly(),
       workspaceCtx.docsRef,
       vi.fn(),
     );
@@ -135,7 +140,7 @@ describe("registerDelegationTools / invoke_agent", () => {
     registerDelegationTools(
       registry,
       factory,
-      createToolRegistry(et, wt).readOnly(),
+      createToolRegistry(et, wt, skillsCtx).readOnly(),
       wt.docsRef,
       vi.fn(),
     );
@@ -160,7 +165,7 @@ describe("registerDelegationTools / invoke_agent", () => {
     registerDelegationTools(
       registry,
       factory,
-      createToolRegistry(et, wt).readOnly(),
+      createToolRegistry(et, wt, skillsCtx).readOnly(),
       wt.docsRef,
       vi.fn(),
     );
@@ -190,7 +195,7 @@ describe("registerDelegationTools / invoke_agent", () => {
     registerDelegationTools(
       registry,
       factory,
-      createToolRegistry(et, wt).readOnly(),
+      createToolRegistry(et, wt, skillsCtx).readOnly(),
       wt.docsRef,
       vi.fn(),
     );
@@ -211,7 +216,7 @@ describe("registerDelegationTools / invoke_agent", () => {
     registerDelegationTools(
       registry,
       factory,
-      createToolRegistry(et, wt).readOnly(),
+      createToolRegistry(et, wt, skillsCtx).readOnly(),
       wt.docsRef,
       vi.fn(),
     );
@@ -228,7 +233,7 @@ describe("registerDelegationTools / invoke_agent", () => {
     registerDelegationTools(
       registry,
       factory,
-      createToolRegistry(et, wt).readOnly(),
+      createToolRegistry(et, wt, skillsCtx).readOnly(),
       wt.docsRef,
       vi.fn(),
     );
@@ -273,7 +278,7 @@ describe("registerDelegationTools / invoke_planner", () => {
     registerDelegationTools(
       registry,
       factory,
-      createToolRegistry(et, wt).readOnly(),
+      createToolRegistry(et, wt, skillsCtx).readOnly(),
       wt.docsRef,
       vi.fn(),
     );
@@ -293,7 +298,7 @@ describe("registerDelegationTools / invoke_planner", () => {
     registerDelegationTools(
       registry,
       factory,
-      createToolRegistry(et, wt).readOnly(),
+      createToolRegistry(et, wt, skillsCtx).readOnly(),
       wt.docsRef,
       autoConfirm,
     );
@@ -317,7 +322,7 @@ describe("registerDelegationTools / invoke_planner", () => {
     registerDelegationTools(
       registry,
       factory,
-      createToolRegistry(et, wt).readOnly(),
+      createToolRegistry(et, wt, skillsCtx).readOnly(),
       wt.docsRef,
       autoConfirm,
     );
@@ -341,7 +346,7 @@ describe("registerDelegationTools / invoke_planner", () => {
     registerDelegationTools(
       registry,
       factory,
-      createToolRegistry(et, wt).readOnly(),
+      createToolRegistry(et, wt, skillsCtx).readOnly(),
       wt.docsRef,
       vi.fn(),
     );
@@ -361,7 +366,7 @@ describe("registerDelegationTools / invoke_planner", () => {
     registerDelegationTools(
       registry,
       factory,
-      createToolRegistry(et, wt).readOnly(),
+      createToolRegistry(et, wt, skillsCtx).readOnly(),
       wt.docsRef,
       vi.fn(),
     );
@@ -381,7 +386,7 @@ describe("registerDelegationTools / invoke_planner", () => {
     registerDelegationTools(
       registry,
       factory,
-      createToolRegistry(et, wt).readOnly(),
+      createToolRegistry(et, wt, skillsCtx).readOnly(),
       wt.docsRef,
       autoConfirm,
     );
@@ -402,7 +407,7 @@ describe("registerDelegationTools / invoke_planner", () => {
     registerDelegationTools(
       registry,
       factory,
-      createToolRegistry(et, wt).readOnly(),
+      createToolRegistry(et, wt, skillsCtx).readOnly(),
       wt.docsRef,
       autoConfirm,
     );
@@ -424,7 +429,7 @@ describe("registerDelegationTools / invoke_planner", () => {
     registerDelegationTools(
       registry,
       factory,
-      createToolRegistry(et, wt).readOnly(),
+      createToolRegistry(et, wt, skillsCtx).readOnly(),
       wt.docsRef,
       rejectConfirm,
     );
@@ -447,7 +452,7 @@ describe("registerDelegationTools / invoke_planner", () => {
     registerDelegationTools(
       registry,
       factory,
-      createToolRegistry(et, wt).readOnly(),
+      createToolRegistry(et, wt, skillsCtx).readOnly(),
       wt.docsRef,
       rejectConfirm,
     );
@@ -473,7 +478,7 @@ describe("registerDelegationTools / invoke_researcher", () => {
     registerDelegationTools(
       registry,
       factory,
-      createToolRegistry(et, wt).readOnly(),
+      createToolRegistry(et, wt, skillsCtx).readOnly(),
       wt.docsRef,
       vi.fn(),
     );
@@ -502,7 +507,7 @@ describe("registerDelegationTools / invoke_researcher", () => {
     registerDelegationTools(
       registry,
       factory,
-      createToolRegistry(et, wt).readOnly(),
+      createToolRegistry(et, wt, skillsCtx).readOnly(),
       wt.docsRef,
       vi.fn(),
     );
@@ -537,7 +542,7 @@ describe("registerDelegationTools / invoke_researcher", () => {
     registerDelegationTools(
       registry,
       factory,
-      createToolRegistry(et, wt).readOnly(),
+      createToolRegistry(et, wt, skillsCtx).readOnly(),
       wt.docsRef,
       vi.fn(),
     );
@@ -576,7 +581,7 @@ describe("registerDelegationTools / invoke_researcher", () => {
     registerDelegationTools(
       registry,
       factory,
-      createToolRegistry(et, wt).readOnly(),
+      createToolRegistry(et, wt, skillsCtx).readOnly(),
       wt.docsRef,
       vi.fn(),
     );
@@ -608,7 +613,7 @@ describe("registerDelegationTools / invoke_researcher", () => {
     registerDelegationTools(
       registry,
       factory,
-      createToolRegistry(et, wt).readOnly(),
+      createToolRegistry(et, wt, skillsCtx).readOnly(),
       wt.docsRef,
       vi.fn(),
     );

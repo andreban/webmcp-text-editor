@@ -1,67 +1,53 @@
-# Product Requirements Document: AI Agent Text Editor
+# Product Requirements Document: WebMCP Text Editor
 
 ## Goal
 
-To provide a modern, AI-powered text editing experience where a browser-native AI agent assists the user in real-time. The agent should be able to read the editor's content, suggest improvements, and perform text manipulations directly within the editor.
+Provide a browser-based Monaco text editor that is fully driveable by **external** AI agents through the WebMCP API (`navigator.modelContext`). The page itself has no chat input — the agent lives in a parent context (browser extension, claude.ai tab, etc.) and operates the editor, workspace documents, and skills purely through tool calls. Approvals, edit diffs, and tool-call activity are surfaced in the main UI so the user stays in control of what the agent does.
 
-## Key Features
+This project is forked from [agent-text-editor](https://github.com/andreban/agent-text-editor), which embeds an in-page Gemini agent. The fork keeps the editor and workspace functionality, drops the in-page chat, and exposes everything via WebMCP. A Gemini API key is still optional for sub-agent delegation tools (`invoke_planner`, `invoke_writer`, `delegate_to_skill`, …), which run internally but are only invokable by the external agent through WebMCP.
 
-- **Monaco Editor Integration:** A high-performance text editor for a seamless writing experience, with a toggleable Markdown preview mode.
-- **AI Agent (MAST):** A browser-native agent using the `mast-ai` library for low-latency, secure, and stateful interactions.
-- **Google Gen AI Integration:** Utilizing the latest `@google/genai` SDK. Users can choose their preferred underlying model from a list of current models (defaulting to Gemini 3.1 Flash Lite Preview).
-- **Editor-Aware Tools:** The agent has access to tools that operate on the currently open document:
-  - **Read:** Retrieve the entire open document's content.
-  - **Read Selection:** Retrieve only the text currently highlighted by the user for focused tasks.
-  - **Search:** Find specific words or phrases within the open document without reading the whole file.
-  - **Get Metadata:** Access document statistics like word count, character count, and current cursor position.
-  - **Edit:** Suggest targeted, surgical edits (insertions, removals, or replacements) by providing a minimal snippet of the original text and the new text. Enforces strict length limits to prevent accidental full-document rewrites.
-  - **Write:** Propose replacing the entire open document's content (e.g., when drafting a new document or completing a full rewrite).
-- **Workspaces:** The application organises documents into named, persistent workspaces. Each workspace is an independent collection of documents stored in the browser's local storage. Users can:
-  - **Create** a new workspace with a chosen name.
-  - **Open** an existing workspace; the last-active document is restored automatically.
-  - **Rename** a workspace at any time.
-  - **Delete** an entire workspace and all its documents.
-  - Switch between workspaces via a workspace picker screen, accessible from the editor header.
-- **Document Navigator:** Within a workspace, the left drawer lists all documents. Users can create, rename, delete, and switch between documents. The Monaco editor always shows the currently active document, and any document can become the active one.
-- **Workspace-Aware Agent Tools:** In addition to the editor tools, the agent can interact with all documents in the active workspace:
-  - **Get Active Document Info:** Returns the ID and title of the currently open document.
-  - **List Workspace Documents:** Returns the ID and title of every document in the workspace (no content).
-  - **Read Workspace Document:** Returns the full content of a specific document by ID.
-  - **Query Workspace Document:** Delegates to a short-lived sub-agent that reads one document and returns a focused summary relevant to a query, without loading the full content into the main context.
-  - **Query Workspace:** Queries all documents in the workspace and synthesizes the results into a single answer via a sub-agent.
-  - **Create Document:** Creates a new document in the workspace (requires user approval).
-  - **Rename Document:** Renames an existing document by ID (requires user approval).
-  - **Delete Document:** Deletes a document by ID (requires user approval).
-  - **Switch Active Document:** Changes the currently open document in the editor.
-- **Approval Workflow:** By default, all modifications proposed by the agent (via `edit`, `write`, or workspace mutation tools) require explicit user approval. Tool execution pauses asynchronously until the user acts (Accept/Reject), ensuring the agent is notified of the outcome. Edits are displayed inline using a Google Docs-style aesthetic — word-level diffs highlight changed words with red strikethrough for removed text and green for added text — and automatically scroll into view. The user can optionally enable an "approve all" mode to automatically accept changes for faster editing.
-- **Interactive Sidebar:** A chat-based interface for interacting with the AI agent. On desktop, the sidebar is collapsible to maximise editor space. Agent thinking steps are shown as collapsible panels. Long conversation histories are virtualised for performance.
-- **Document @-Mentions:** Users can type `@` in the chat input to open an autocomplete picker listing workspace documents. Selecting a document inserts a chip token into the message; on submit the resolved `{ id, title }` pairs are injected into the prompt so the agent can reference documents by ID directly, without needing to call `list_workspace_docs` first.
-- **Local Settings:** User preferences, credentials (like the Google AI Studio API key), and the selected AI model are securely saved in the browser's local storage to persist across sessions without requiring a backend.
-- **Dark Mode:** The application supports light and dark themes. The user can toggle between them via a UI control, and the preference is persisted across sessions. Both the Monaco editor and all UI components adapt to the selected theme.
-- **Mobile-Friendly Interface:** The application is responsive and usable on mobile devices. On small screens, the editor and chat sidebar are presented as navigable tabs rather than a side-by-side split pane, ensuring the full editing and chat experience is accessible without horizontal scrolling or cramped layouts.
-- **Custom Skills (Sub-Agents):** Users can define custom specialized agents by providing:
-  - **Name:** The identifier for the skill (e.g., "Styleguide Reviewer").
-  - **Description:** What the skill does and when to use it.
-  - **Instructions:** The actual system instructions for the sub-agent.
-  - The main agent's system prompt is dynamically injected with only the _names_ and _descriptions_ so it knows when to delegate. The _instructions_ are only loaded and used by the sub-agent when `delegate_to_skill` is invoked.
-- **Default Skills:** The application comes pre-loaded with several useful skills to provide immediate value:
-  - **Proofreader:** Checks for grammar, spelling, and punctuation errors.
-  - **Summarizer:** Distills large blocks of text into concise summaries.
-  - **Markdown Formatter:** Ensures content follows clean, standard Markdown formatting.
-  - Users can edit or delete these default skills, or create their own.
-- **WebMCP Integration:** All editor and workspace tools are also exposed via the WebMCP API (`navigator.modelContext`), allowing external browser agents to interact with the editor without going through the built-in chat interface.
+## Key features
 
-## User Persona
+- **Monaco editor** with light/dark theme and a togglable Markdown preview tab. Bound to the active document of the active workspace.
+- **Workspaces** stored in `localStorage`. Users create, rename, delete, and switch between workspaces via a workspace picker; each workspace holds its own document list.
+- **Document navigator** in the left drawer for the active workspace — create, rename, delete, and switch documents.
+- **WebMCP bridge** — every tool is mirrored into `navigator.modelContext` so a connected external agent can read and modify the editor and workspace. The bridge is the only agent surface.
+- **Editor tools** (read scope unless marked):
+  - `read`, `read_selection`, `search`, `get_metadata`, `get_current_mode`, `request_switch_to_editor`.
+  - `edit` (targeted change, requires approval), `write` (full document replacement, requires approval).
+- **Workspace tools**:
+  - `get_active_doc_info`, `list_workspace_docs`, `read_workspace_doc`, `query_workspace_doc`, `query_workspace` (read-only; the last two delegate to a sub-agent).
+  - `create_document`, `rename_document`, `delete_document` (require approval).
+  - `switch_active_document`.
+- **Skill tools** (read-only discovery for the external agent):
+  - `list_skills` — returns `{ id, name, description }` for every skill.
+  - `read_skill` — returns the full skill definition (`id`, `name`, `description`, `instructions`, optional `model`) by id or by name.
+- **Sub-agent delegation tools** — `invoke_planner`, `invoke_researcher`, `invoke_writer`, `invoke_reviewer`, `invoke_agent`, `delegate_to_skill`. These run Gemini-backed sub-agents internally and are exposed via WebMCP for the external agent to call. They require a Gemini API key set via the Settings dialog; if no key is present they simply don't register.
+- **Inline approval for `edit`/`write`** — pending suggestions render as Monaco view zones with a word-level diff (red strikethrough for removed text, green for added) and Accept / Reject buttons docked inside the card. The view zone height tracks the rendered content via `ResizeObserver`.
+- **Modal approval for workspace mutations** — `create_document`, `rename_document`, `delete_document`, and `invoke_planner` plan confirmations open a Radix dialog with the proposed change and Approve / Reject buttons.
+- **Approve All mode** — header bar toggle that short-circuits every approval prompt.
+- **Tool Activity bottom pane** — collapsible panel that subscribes to a live `ToolActivityLog`. Each WebMCP call is recorded with name, args, result/error, and duration; sub-agent stream events (`text_delta`, `thinking`, `tool_call_started`, `tool_call_completed`) are recorded as chatter linked to the parent call. The pane auto-scrolls when at the bottom and supports a one-click Clear.
+- **Skills editor** — `SkillsDialog` lets users create, edit, and delete custom skill definitions. Skills are persisted in `localStorage` and exposed read-only over WebMCP via `list_skills` / `read_skill`. The external agent typically calls `list_skills` to discover what is available and then `delegate_to_skill` to run one.
+- **Settings dialog** — Gemini API key (optional, only used by sub-agent tools), model selector, theme.
+- **Dark mode** — toggle in the header, persisted in `localStorage`. Monaco and all UI components switch.
+- **Mobile layout** — stacked: editor takes most of the screen, tool activity pane at the bottom, dialogs cover full screen when open.
 
-- **Writers/Content Creators:** Who need assistance with brainstorming, drafting, and editing.
-- **Developers:** Who want an AI-assisted notepad for quick notes or snippets.
-- **AI Enthusiasts:** Who want to explore browser-native agent patterns using MAST.
+## User persona
 
-## Success Metrics
+- **Power users of an external WebMCP agent** (e.g., a browser-extension agent or claude.ai with WebMCP support) who want a structured editor surface their agent can drive deterministically.
+- **WebMCP tool authors** building demonstrations or testing how external agents interact with rich in-page tools.
 
-- **Performance:** Low-latency response times for agent thoughts and tool executions.
-- **Correctness:** The agent correctly identifies and executes editor operations.
-- **Usability:** A simple, intuitive interface that balances the editor and the AI interaction.
+## Out of scope
+
+- In-page chat or agent loop. The page never originates an LLM request based on user text input — it only responds to WebMCP calls.
+- Server-side persistence. All state lives in the browser.
+- Document collaboration / multi-user editing.
+
+## Success metrics
+
+- **Tool coverage:** every editor and workspace operation the agent needs is reachable via WebMCP without a fallback to direct DOM manipulation.
+- **Approval transparency:** the user can always see _what_ the agent is asking to do and can reject every mutating call.
+- **Observability:** every tool call (and every sub-agent event from delegation tools) is visible in the activity pane in real time.
 
 ## License
 

@@ -1,5 +1,7 @@
 # Implementation Plan: AI Agent Text Editor
 
+> **Historical note.** This plan documents the original `agent-text-editor` build sequence — the in-page Gemini chat the WebMCP fork inherits its editor / workspace plumbing from. The WebMCP fork itself does not have a planned sequence captured here; for the fork's current architecture see `PRD.md` and `SPEC.md`.
+
 This document outlines the phased implementation strategy for the AI Agent Text Editor. Each phase is designed to be small, easily reviewable, and results in a working application state.
 
 **Workflow per Phase:**

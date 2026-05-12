@@ -1,53 +1,50 @@
 // Copyright 2026 Andre Cipriani Bandarra
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import {
-  AgentProvider,
-  INLINE_APPROVAL,
-  type OnApprovalRequired,
-  type IconMap,
-} from "@mast-ai/react-ui";
-import type { AgentConfig } from "@mast-ai/core";
+  createContext,
+  useContext,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { ToolRegistry } from "@mast-ai/core";
 import { addAllBuiltInAITools } from "@mast-ai/built-in-ai";
-import {
-  Brain,
-  Wrench,
-  CircleCheck,
-  CircleX,
-  Ban,
-  Loader2,
-  Send,
-  Square,
-} from "lucide-react";
-import {
-  DefaultAgentRunnerFactory,
-  buildOrchestratorPrompt,
-} from "@/lib/agents";
+import { DefaultAgentRunnerFactory } from "@/lib/agents";
+import type { AgentRunnerFactory } from "@/lib/agents";
 import type { EditorContext } from "@/lib/agents/tools/editor/context";
 import type { WorkspaceContext } from "@/lib/agents/tools/workspace/context";
+import type { SkillsContext } from "@/lib/agents/tools/skills/context";
 import { DelegateToSkillTool } from "@/lib/agents/tools/delegation/delegate_to_skill";
 import { createToolRegistry } from "@/lib/agents/tools/registries";
 import { registerDelegationTools } from "@/lib/agents/tools/delegation";
 import { registerWebMCPTools } from "@/lib/WebMCPTools";
+import { ToolActivityLog } from "@/lib/toolActivityLog";
 import { useAgentConfig, useEditorUI } from "@/lib/store";
 import { useWorkspaces } from "@/lib/WorkspacesContext";
 
-const ICONS: IconMap = {
-  brain: <Brain className="w-4 h-4" />,
-  wrench: <Wrench className="w-4 h-4" />,
-  check: <CircleCheck className="w-4 h-4" />,
-  error: <CircleX className="w-4 h-4" />,
-  cancelled: <Ban className="w-4 h-4" />,
-  loader: <Loader2 className="w-4 h-4 animate-spin" />,
-  send: <Send className="w-4 h-4" />,
-  stop: <Square className="w-4 h-4" />,
-};
+interface MCPContextValue {
+  registry: ToolRegistry;
+  activityLog: ToolActivityLog;
+  factory: AgentRunnerFactory | null;
+}
 
-export function AgentProviderShim({ children }: { children: ReactNode }) {
+const MCPContext = createContext<MCPContextValue | undefined>(undefined);
+
+export function useMCP(): MCPContextValue {
+  const ctx = useContext(MCPContext);
+  if (!ctx) throw new Error("useMCP must be used within an MCPProvider");
+  return ctx;
+}
+
+export function MCPProvider({ children }: { children: ReactNode }) {
   const { apiKey, modelName, skills, setTotalTokens } = useAgentConfig();
   const {
     setSuggestions,
+    setPendingApprovals,
     approveAll,
     activeTab,
     editorContent,
@@ -63,6 +60,8 @@ export function AgentProviderShim({ children }: { children: ReactNode }) {
     deleteDocument,
     setActiveDocumentId,
   } = useWorkspaces();
+
+  const [activityLog] = useState(() => new ToolActivityLog());
 
   const docsRef = useRef(activeWorkspace?.documents ?? []);
   useEffect(() => {
@@ -99,6 +98,13 @@ export function AgentProviderShim({ children }: { children: ReactNode }) {
   useEffect(() => {
     approveAllRef.current = approveAll;
   }, [approveAll]);
+
+  const skillsRef = useRef(skills);
+  useEffect(() => {
+    skillsRef.current = skills;
+  }, [skills]);
+
+  const skillsCtx = useMemo<SkillsContext>(() => ({ skillsRef }), []);
 
   const requestTabSwitch = useCallback(
     () =>
@@ -146,6 +152,8 @@ export function AgentProviderShim({ children }: { children: ReactNode }) {
       saveDocContentFn: (id, content) => updateDocument(id, { content }),
       editorRef: editorInstanceRef,
       editorContentRef,
+      setPendingApprovals,
+      approveAllRef,
     }),
     [
       factory,
@@ -153,25 +161,24 @@ export function AgentProviderShim({ children }: { children: ReactNode }) {
       updateDocument,
       deleteDocument,
       setActiveDocumentId,
+      setPendingApprovals,
     ],
   );
 
   const registry = useMemo(
     // eslint-disable-next-line react-hooks/refs
-    () => createToolRegistry(editorCtx, workspaceCtx),
-    [editorCtx, workspaceCtx],
+    () => createToolRegistry(editorCtx, workspaceCtx, skillsCtx),
+    [editorCtx, workspaceCtx, skillsCtx],
   );
 
-  // Built-ins resolve asynchronously based on browser availability, so they
-  // land in the registry after the initial render. The listener-based WebMCP
-  // bridge picks them up via `tool-registered` events.
   useEffect(() => {
     addAllBuiltInAITools(registry).catch(() => {});
   }, [registry]);
 
-  // Mirror the live registry into navigator.modelContext so external WebMCP
-  // agents can drive the editor regardless of internal-agent configuration.
-  useEffect(() => registerWebMCPTools(registry), [registry]);
+  useEffect(
+    () => registerWebMCPTools(registry, activityLog),
+    [registry, activityLog],
+  );
 
   useEffect(() => {
     if (!factory) return;
@@ -193,54 +200,10 @@ export function AgentProviderShim({ children }: { children: ReactNode }) {
     };
   }, [registry, factory, workspaceCtx, setPendingPlanConfirmation]);
 
-  const runner = useMemo(() => {
-    if (!factory) return null;
-    return factory.create({ tools: registry });
-  }, [factory, registry]);
-
-  const agent = useMemo<AgentConfig>(
-    () => ({
-      name: "EditorAssistant",
-      instructions: buildOrchestratorPrompt(skills),
-    }),
-    [skills],
+  const value = useMemo<MCPContextValue>(
+    () => ({ registry, activityLog, factory }),
+    [registry, activityLog, factory],
   );
 
-  // Routing rules:
-  // - Approve-all toggle bypasses every prompt (matches the previous bespoke
-  //   behaviour).
-  // - `edit`/`write` keep their Monaco suggestion UI: the tool's own
-  //   `applySuggestion` handles approval inline in the editor, so we simply
-  //   let the call through.
-  // - Workspace mutations (`create_document`, `rename_document`,
-  //   `delete_document`) defer to the library's inline approval queue, which
-  //   renders an Approve / Reject prompt inside the assistant message.
-  // - Anything else falls through unprompted (today nothing else carries
-  //   `requiresApproval: true`).
-  const onApprovalRequired = useCallback<OnApprovalRequired>(
-    async (toolCall) => {
-      if (approveAllRef.current) return true;
-      if (toolCall.name === "edit" || toolCall.name === "write") return true;
-      if (
-        toolCall.name === "create_document" ||
-        toolCall.name === "rename_document" ||
-        toolCall.name === "delete_document"
-      ) {
-        return INLINE_APPROVAL;
-      }
-      return true;
-    },
-    [],
-  );
-
-  return (
-    <AgentProvider
-      runner={runner}
-      agent={agent}
-      icons={ICONS}
-      onApprovalRequired={onApprovalRequired}
-    >
-      {children}
-    </AgentProvider>
-  );
+  return <MCPContext.Provider value={value}>{children}</MCPContext.Provider>;
 }

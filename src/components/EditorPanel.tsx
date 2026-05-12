@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { MarkdownContent } from "./MarkdownContent";
+import { InlineSuggestions } from "./InlineSuggestions";
 import { useEditorUI } from "@/lib/store";
 import { useTheme } from "@/lib/ThemeProvider";
 import { useWorkspaces } from "@/lib/WorkspacesContext";
@@ -148,6 +149,7 @@ export function EditorPanel() {
                 renderLineHighlight: "none",
               }}
             />
+            <InlineSuggestions editor={editorInstance} />
           </div>
         </TabsContent>
 

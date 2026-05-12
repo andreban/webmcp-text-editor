@@ -5,7 +5,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { DelegateToSkillTool } from "./delegate_to_skill";
 import type { EditorContext } from "../editor/context";
 import type { WorkspaceContext } from "../workspace/context";
+import type { SkillsContext } from "../skills/context";
 import { createToolRegistry } from "../registries";
+
+const skillsCtx: SkillsContext = { skillsRef: { current: [] } };
 import { saveSkills } from "../../../skills";
 import type { AgentRunnerFactory } from "../../";
 import type { AgentEvent, ToolContext } from "@mast-ai/core";
@@ -80,13 +83,15 @@ describe("DelegateToSkillTool", () => {
       saveDocContentFn: vi.fn(),
       editorRef: { current: null },
       editorContentRef: { current: "" },
+      setPendingApprovals: vi.fn(),
+      approveAllRef: { current: true },
     };
   });
 
   function makeTool(factory = mockFactory) {
     return new DelegateToSkillTool(
       factory,
-      createToolRegistry(editorCtx, workspaceCtx).readOnly(),
+      createToolRegistry(editorCtx, workspaceCtx, skillsCtx).readOnly(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       () => ({ runBuilder: mockRunBuilder }) as any,
     );
@@ -201,7 +206,7 @@ describe("DelegateToSkillTool", () => {
       .mockReturnValue({ runBuilder: mockRunBuilder });
     const tool = new DelegateToSkillTool(
       mockFactory,
-      createToolRegistry(editorCtx, workspaceCtx).readOnly(),
+      createToolRegistry(editorCtx, workspaceCtx, skillsCtx).readOnly(),
       customRunnerFactory,
     );
     await tool.call({ skillName: "Proofreader", task: "t" }, {});

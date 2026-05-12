@@ -27,6 +27,13 @@ export interface PlanConfirmationRequest {
   resolve: (accepted: boolean) => void;
 }
 
+export interface ApprovalRequest {
+  id: string;
+  toolName: string;
+  description: string;
+  resolve: (accepted: boolean) => void;
+}
+
 export interface WorkflowState {
   planId: string;
   steps: Array<{
@@ -72,6 +79,12 @@ interface EditorUIState {
   setPendingTabSwitchRequest: (req: TabSwitchRequest | null) => void;
   pendingPlanConfirmation: PlanConfirmationRequest | null;
   setPendingPlanConfirmation: (req: PlanConfirmationRequest | null) => void;
+  pendingApprovals: ApprovalRequest[];
+  setPendingApprovals: (
+    requests:
+      | ApprovalRequest[]
+      | ((prev: ApprovalRequest[]) => ApprovalRequest[]),
+  ) => void;
   approveAll: boolean;
   setApproveAll: (approve: boolean) => void;
   workflowState: WorkflowState | null;
@@ -109,6 +122,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     useState<TabSwitchRequest | null>(null);
   const [pendingPlanConfirmation, setPendingPlanConfirmation] =
     useState<PlanConfirmationRequest | null>(null);
+  const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>(
+    [],
+  );
   const [approveAll, setApproveAll] = useState(false);
   const [workflowState, setWorkflowState] = useState<WorkflowState | null>(
     null,
@@ -155,6 +171,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     setPendingTabSwitchRequest,
     pendingPlanConfirmation,
     setPendingPlanConfirmation,
+    pendingApprovals,
+    setPendingApprovals,
     approveAll,
     setApproveAll,
     workflowState,

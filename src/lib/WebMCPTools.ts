@@ -1,7 +1,37 @@
 // Copyright 2026 Andre Cipriani Bandarra
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Tool, ToolDefinition, ToolRegistry } from "@mast-ai/core";
+import type {
+  AgentEvent,
+  Tool,
+  ToolContext,
+  ToolDefinition,
+  ToolRegistry,
+} from "@mast-ai/core";
+import type { ToolActivityLog } from "./toolActivityLog";
+
+function describeEvent(event: AgentEvent): string {
+  switch (event.type) {
+    case "tool_call_started": {
+      const args = (() => {
+        try {
+          return JSON.stringify(event.args);
+        } catch {
+          return String(event.args);
+        }
+      })();
+      return `${event.name}(${args})`;
+    }
+    case "tool_call_completed":
+      return `${event.name} ${event.error ? "error" : "ok"}`;
+    case "text_delta":
+      return event.delta;
+    case "thinking":
+      return `(thinking) ${event.delta}`;
+    default:
+      return "";
+  }
+}
 
 interface WebMCPTool {
   name: string;
@@ -20,11 +50,13 @@ declare global {
   }
 }
 
-// We need the listener API on top of ToolProvider.
 type ListenableRegistry = Pick<ToolRegistry, "getTools" | "getTool"> &
   Pick<ToolRegistry, "addEventListener" | "removeEventListener">;
 
-export function registerWebMCPTools(registry: ListenableRegistry): () => void {
+export function registerWebMCPTools(
+  registry: ListenableRegistry,
+  log?: ToolActivityLog,
+): () => void {
   if (!navigator.modelContext) {
     console.warn("WebMCP not detected in this browser.");
     return () => {};
@@ -46,7 +78,28 @@ export function registerWebMCPTools(registry: ListenableRegistry): () => void {
           name: def.name,
           description: def.description,
           inputSchema: def.parameters,
-          execute: (args) => tool.call(args as never, {}) as Promise<string>,
+          execute: async (args) => {
+            const callId = log?.startCall(def.name, args);
+            const ctx: ToolContext =
+              log && callId
+                ? {
+                    onEvent: (event: AgentEvent) => {
+                      if (event.type === "done") return;
+                      log.chatter(callId, event.type, describeEvent(event));
+                    },
+                  }
+                : {};
+            try {
+              const result = (await tool.call(args as never, ctx)) as string;
+              if (callId) log?.finishCall(callId, { ok: true, result });
+              return result;
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              if (callId)
+                log?.finishCall(callId, { ok: false, error: message });
+              throw err;
+            }
+          },
         },
         { signal: ac.signal },
       );

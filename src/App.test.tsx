@@ -1,14 +1,12 @@
 // Copyright 2026 Andre Cipriani Bandarra
 // SPDX-License-Identifier: Apache-2.0
-import { render, screen, fireEvent } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { render, screen } from "@testing-library/react";
 import App from "./App";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { AppProvider } from "./lib/store";
 import { ThemeProvider } from "./lib/ThemeProvider";
 import { WorkspacesProvider } from "./lib/WorkspacesContext";
 
-// Mock Monaco Editor
 vi.mock("@monaco-editor/react", () => ({
   Editor: () => <div data-testid="mock-monaco-editor">Mock Editor</div>,
 }));
@@ -43,110 +41,15 @@ describe("App", () => {
     mockMatchMedia(false);
   });
 
-  it("renders the API key dialog when no key is present", () => {
+  it("renders the editor inside the main shell once a workspace is active", () => {
     renderApp();
-    expect(screen.getByText("Enter Gemini API Key")).toBeInTheDocument();
-  });
-
-  it("renders the main layout when API key is provided", async () => {
-    renderApp();
-
-    const input = screen.getByPlaceholderText("API Key");
-    fireEvent.change(input, { target: { value: "test-key" } });
-    fireEvent.click(screen.getByText("Save Key"));
-
     expect(screen.getByTestId("mock-monaco-editor")).toBeInTheDocument();
-    expect(screen.getAllByText("AI Assistant").length).toBeGreaterThan(0);
-    expect(
-      screen.getByRole("combobox", { name: "Message" }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
-  });
-});
-
-describe("App responsive layout", () => {
-  beforeEach(() => {
-    localStorage.clear();
+    expect(screen.getByLabelText("Open settings")).toBeInTheDocument();
+    expect(screen.getByLabelText("Open skills")).toBeInTheDocument();
   });
 
-  it("renders desktop side-by-side layout without FAB", () => {
-    mockMatchMedia(false);
+  it("renders the bottom tool activity pane", () => {
     renderApp();
-
-    const input = screen.getByPlaceholderText("API Key");
-    fireEvent.change(input, { target: { value: "test-key" } });
-    fireEvent.click(screen.getByText("Save Key"));
-
-    // No FAB on desktop
-    expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull();
-    // Editor and sidebar both visible
-    expect(screen.getByTestId("mock-monaco-editor")).toBeInTheDocument();
-    expect(screen.getAllByText("AI Assistant").length).toBeGreaterThan(0);
-    // Reference drawer toggle button is present
-    expect(
-      screen.getByRole("button", { name: "Expand reference drawer" }),
-    ).toBeInTheDocument();
-  });
-
-  it("renders mobile layout with chat and reference FABs", () => {
-    mockMatchMedia(true);
-    renderApp();
-
-    const input = screen.getByPlaceholderText("API Key");
-    fireEvent.change(input, { target: { value: "test-key" } });
-    fireEvent.click(screen.getByText("Save Key"));
-
-    expect(
-      screen.getByRole("button", { name: "Open chat" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Open reference" }),
-    ).toBeInTheDocument();
-  });
-
-  it("opening the sheet shows the chat sidebar", async () => {
-    const user = userEvent.setup();
-    mockMatchMedia(true);
-    renderApp();
-
-    const input = screen.getByPlaceholderText("API Key");
-    fireEvent.change(input, { target: { value: "test-key" } });
-    fireEvent.click(screen.getByText("Save Key"));
-
-    await user.click(screen.getByRole("button", { name: "Open chat" }));
-    expect(
-      screen.getByRole("combobox", { name: "Message" }),
-    ).toBeInTheDocument();
-  });
-
-  it("closing the sheet hides it", async () => {
-    const user = userEvent.setup();
-    mockMatchMedia(true);
-    renderApp();
-
-    const input = screen.getByPlaceholderText("API Key");
-    fireEvent.change(input, { target: { value: "test-key" } });
-    fireEvent.click(screen.getByText("Save Key"));
-
-    await user.click(screen.getByRole("button", { name: "Open chat" }));
-    await user.click(screen.getByRole("button", { name: "Close chat" }));
-
-    // Sheet is translated off-screen (aria-hidden true)
-    // The sheet element is still in DOM but hidden
-    const sheet = document.querySelector("[aria-hidden='true']");
-    expect(sheet).not.toBeNull();
-  });
-
-  it("FAB meets touch-target size (h-14 w-14)", () => {
-    mockMatchMedia(true);
-    renderApp();
-
-    const input = screen.getByPlaceholderText("API Key");
-    fireEvent.change(input, { target: { value: "test-key" } });
-    fireEvent.click(screen.getByText("Save Key"));
-
-    const fab = screen.getByRole("button", { name: "Open chat" });
-    expect(fab.className).toContain("h-14");
-    expect(fab.className).toContain("w-14");
+    expect(screen.getByText("Tool Activity")).toBeInTheDocument();
   });
 });

@@ -4,6 +4,9 @@
 import { ToolRegistry } from "@mast-ai/core";
 import type { EditorContext } from "./editor/context";
 import type { WorkspaceContext } from "./workspace/context";
+import type { SkillsContext } from "./skills/context";
+import { ListSkillsTool } from "./skills/list_skills";
+import { ReadSkillTool } from "./skills/read_skill";
 import { ReadTool } from "./editor/read";
 import { ReadSelectionTool } from "./editor/read_selection";
 import { SearchTool } from "./editor/search";
@@ -25,8 +28,12 @@ import { SwitchActiveDocumentTool } from "./workspace/switch_active_document";
 export function createToolRegistry(
   editorCtx: EditorContext,
   workspaceCtx: WorkspaceContext,
+  skillsCtx: SkillsContext,
 ): ToolRegistry {
   const registry = new ToolRegistry();
+
+  registry.register(new ListSkillsTool(skillsCtx));
+  registry.register(new ReadSkillTool(skillsCtx));
 
   registry.register(new ReadTool(editorCtx));
   registry.register(new ReadSelectionTool(editorCtx));

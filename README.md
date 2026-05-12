@@ -1,35 +1,30 @@
-# Agent Text Editor
+# WebMCP Text Editor
 
-An AI-powered collaborative text editor where an LLM agent assists with editing text in a Monaco editor.
+A browser-based Monaco editor that exposes itself to external AI agents through [WebMCP](https://github.com/webmachinelearning/webmcp). The page has no internal chat — agents drive it from outside via `navigator.modelContext`, and approvals, diffs, and tool activity are rendered in the main UI.
 
-## Overview
+## What's here
 
-Agent Text Editor is a React SPA that lets you write and edit text with the help of a Google Gemini AI agent. The agent can read your document, suggest edits, and rewrite sections — and every proposed change requires your explicit approval before it's applied.
-
-## Features
-
-- **Monaco editor** — full-featured code/text editor in the browser
-- **AI-assisted editing** — chat with a Gemini agent that can read and edit your document
-- **Approval workflow** — each AI-proposed edit is shown as a diff (strikethrough + replacement) for you to accept or reject
-- **Approve All mode** — bypass per-edit confirmation for unattended bulk edits
-- **Streaming responses** — real-time token streaming with collapsible thinking chunks
-- **Token usage tracking** — aggregated input/output token counts per session
+- A Monaco editor with workspace/document management.
+- A WebMCP bridge that registers ~20 tools on `navigator.modelContext` (editor read/edit/write, workspace document CRUD, search, skill discovery, sub-agent delegation).
+- Inline diff widgets rendered as Monaco view zones for `edit`/`write` proposals — Accept/Reject inline at the change site.
+- A modal approval prompt for document-mutating tools (`create_document`, `rename_document`, `delete_document`) and `invoke_planner`'s plan confirmation.
+- A bottom **Tool Activity** pane that logs every WebMCP tool call (args, result, duration) and the streaming events from sub-agents (`invoke_planner`, `invoke_researcher`, `invoke_writer`, `invoke_reviewer`, `invoke_agent`, `delegate_to_skill`).
 
 ## Prerequisites
 
 - Node.js 18+
-- A [Google AI Studio](https://aistudio.google.com/) API key
+- A browser that exposes `navigator.modelContext` (the WebMCP capability). A Gemini API key is only needed if you intend to use the sub-agent delegation tools.
 
-## Getting Started
+## Getting started
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open the app in your browser, enter your Google AI API key in the settings panel, and start chatting.
+Open the page; the editor and tool activity pane are immediately visible. Connect a WebMCP-enabled agent to drive the editor. To enable sub-agent tools, add a Gemini API key via the Settings dialog.
 
-## Available Commands
+## Available commands
 
 ```bash
 npm run dev       # Start Vite dev server
@@ -44,22 +39,26 @@ npm run preview   # Preview production build
 
 **Data flow:**
 
-1. User submits a prompt in `ChatSidebar`
-2. `App.tsx` creates an `AgentRunner` (from `@mast-ai/core`) backed by `GoogleGenAIAdapter`
-3. The LLM decides to respond or invoke tools (`read`, `read_selection`, `edit`, `write`)
-4. Mutating tools (`edit`/`write`) create a `Suggestion` entry in store state — the UI pauses and prompts the user to accept or reject unless "Approve All" is enabled
-5. The tool resolves with the user's decision, and the agent loop continues until a final text response
+1. `MCPProvider` (`src/context/MCPProvider.tsx`) builds editor / workspace / skills contexts, instantiates a `ToolRegistry`, registers all tools, and mirrors them into `navigator.modelContext`.
+2. An external WebMCP agent calls a tool. The bridge in `src/lib/WebMCPTools.ts` wraps each call, records it in the `ToolActivityLog`, and forwards sub-agent events (`text_delta`, `thinking`, `tool_call_started`, etc.) into the same log as chatter.
+3. Mutating tools self-gate: `edit`/`write` queue a `Suggestion` and wait for inline Accept/Reject; `create_document`/`rename_document`/`delete_document` queue an `ApprovalRequest` resolved by the modal; `invoke_planner` queues a `PlanConfirmationRequest`.
+4. The `ToolLogPane` subscribes to `ToolActivityLog` and renders calls with expandable args/result/chatter.
 
 **Key modules:**
 
-| Module                               | Description                                                                                          |
-| ------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| `src/adapters/GoogleGenAIAdapter.ts` | `LlmAdapter` implementation for Google Gen AI SDK; handles streaming, thinking mode, and token usage |
-| `src/lib/EditorTools.ts`             | Registers the four editor tools (`read`, `read_selection`, `edit`, `write`) with `ToolRegistry`      |
-| `src/lib/store.tsx`                  | React Context holding editor instance, pending suggestions, API key, model, and token counts         |
-| `src/components/EditorPanel.tsx`     | Monaco editor with diff decorations and accept/reject widgets                                        |
-| `src/components/ChatSidebar.tsx`     | Streaming chat UI with thinking chunks, text deltas, and tool events                                 |
-| `src/App.tsx`                        | Top-level assembly: agent runner, system prompt, and settings persistence                            |
+| Module                                               | Purpose                                                                                                                 |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `src/context/MCPProvider.tsx`                        | Top-level wiring — builds the registry, runs the WebMCP bridge, exposes `registry`/`activityLog`/`factory` to children. |
+| `src/lib/WebMCPTools.ts`                             | Bridges `ToolRegistry` → `navigator.modelContext`, logs every call, and forwards sub-agent events.                      |
+| `src/lib/toolActivityLog.ts`                         | In-memory subscriber-based log of tool calls + sub-agent chatter, capped at 500 entries.                                |
+| `src/lib/agents/tools/registries.ts`                 | Constructs the `ToolRegistry` with editor / workspace / skills tools.                                                   |
+| `src/lib/agents/tools/skills/`                       | `list_skills` and `read_skill` — read-only skill discovery exposed via WebMCP.                                          |
+| `src/lib/agents/tools/workspace/request_approval.ts` | Helper that queues an `ApprovalRequest` and awaits resolution (used by mutating workspace tools).                       |
+| `src/components/InlineSuggestions.tsx`               | Inline Monaco view zones for pending `edit`/`write` suggestions with Accept/Reject buttons.                             |
+| `src/components/ApprovalModal.tsx`                   | Modal for workspace mutation approvals and plan confirmations.                                                          |
+| `src/components/ToolLogPane.tsx`                     | Bottom pane that renders the live `ToolActivityLog`.                                                                    |
+| `src/components/EditorPanel.tsx`                     | Monaco editor + preview tabs + tab-switch confirmation dialog.                                                          |
+| `src/components/WorkspacePanel.tsx`                  | Document browser for the active workspace.                                                                              |
 
 ## License
 

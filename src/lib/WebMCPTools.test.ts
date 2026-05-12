@@ -6,6 +6,9 @@ import { registerWebMCPTools } from "./WebMCPTools";
 import { createToolRegistry } from "./agents/tools/registries";
 import type { EditorContext } from "./agents/tools/editor/context";
 import type { WorkspaceContext } from "./agents/tools/workspace/context";
+import type { SkillsContext } from "./agents/tools/skills/context";
+
+const skillsCtx: SkillsContext = { skillsRef: { current: [] } };
 
 function makeEditorCtx(): EditorContext {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -46,6 +49,8 @@ function makeWorkspaceCtx(): WorkspaceContext {
     saveDocContentFn: vi.fn(),
     editorRef: { current: null },
     editorContentRef: { current: "" },
+    setPendingApprovals: vi.fn(),
+    approveAllRef: { current: true },
   };
 }
 
@@ -93,7 +98,7 @@ describe("registerWebMCPTools", () => {
     };
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const cleanup = registerWebMCPTools(
-      createToolRegistry(makeEditorCtx(), makeWorkspaceCtx()),
+      createToolRegistry(makeEditorCtx(), makeWorkspaceCtx(), skillsCtx),
     );
     expect(warnSpy).toHaveBeenCalledWith(
       "WebMCP tool registration failed:",
@@ -114,7 +119,7 @@ describe("registerWebMCPTools", () => {
     };
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     registerWebMCPTools(
-      createToolRegistry(makeEditorCtx(), makeWorkspaceCtx()),
+      createToolRegistry(makeEditorCtx(), makeWorkspaceCtx(), skillsCtx),
     );
     expect(calls).toBe(1);
     warnSpy.mockRestore();
@@ -124,16 +129,18 @@ describe("registerWebMCPTools", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     delete (navigator as any).modelContext;
     const cleanup = registerWebMCPTools(
-      createToolRegistry(makeEditorCtx(), makeWorkspaceCtx()),
+      createToolRegistry(makeEditorCtx(), makeWorkspaceCtx(), skillsCtx),
     );
     expect(() => cleanup()).not.toThrow();
   });
 
   it("registers all expected tools", () => {
     registerWebMCPTools(
-      createToolRegistry(makeEditorCtx(), makeWorkspaceCtx()),
+      createToolRegistry(makeEditorCtx(), makeWorkspaceCtx(), skillsCtx),
     );
     const expected = [
+      "list_skills",
+      "read_skill",
       "read",
       "read_selection",
       "search",
@@ -160,7 +167,7 @@ describe("registerWebMCPTools", () => {
 
   it("passes an AbortSignal to each registered tool", () => {
     registerWebMCPTools(
-      createToolRegistry(makeEditorCtx(), makeWorkspaceCtx()),
+      createToolRegistry(makeEditorCtx(), makeWorkspaceCtx(), skillsCtx),
     );
     for (const [, entry] of registeredTools) {
       expect(entry.signal).toBeInstanceOf(AbortSignal);
@@ -169,7 +176,7 @@ describe("registerWebMCPTools", () => {
 
   it("cleanup aborts every registered signal", () => {
     const cleanup = registerWebMCPTools(
-      createToolRegistry(makeEditorCtx(), makeWorkspaceCtx()),
+      createToolRegistry(makeEditorCtx(), makeWorkspaceCtx(), skillsCtx),
     );
     const signals = [...registeredTools.values()].map((e) => e.signal!);
     expect(signals.length).toBeGreaterThan(0);
@@ -179,7 +186,11 @@ describe("registerWebMCPTools", () => {
   });
 
   it("registers tools added to the registry after subscription", () => {
-    const registry = createToolRegistry(makeEditorCtx(), makeWorkspaceCtx());
+    const registry = createToolRegistry(
+      makeEditorCtx(),
+      makeWorkspaceCtx(),
+      skillsCtx,
+    );
     registerWebMCPTools(registry);
     const initialCount = registeredTools.size;
     const lateTool = {
@@ -197,7 +208,11 @@ describe("registerWebMCPTools", () => {
   });
 
   it("unregistering from the registry aborts only that tool's signal", () => {
-    const registry = createToolRegistry(makeEditorCtx(), makeWorkspaceCtx());
+    const registry = createToolRegistry(
+      makeEditorCtx(),
+      makeWorkspaceCtx(),
+      skillsCtx,
+    );
     registerWebMCPTools(registry);
     const readSignal = registeredTools.get("read")!.signal!;
     const editSignal = registeredTools.get("edit")!.signal!;
@@ -208,7 +223,7 @@ describe("registerWebMCPTools", () => {
 
   it("read execute returns editor content", async () => {
     registerWebMCPTools(
-      createToolRegistry(makeEditorCtx(), makeWorkspaceCtx()),
+      createToolRegistry(makeEditorCtx(), makeWorkspaceCtx(), skillsCtx),
     );
     expect(await registeredTools.get("read")!.execute({})).toBe(
       "editor content",
@@ -217,7 +232,7 @@ describe("registerWebMCPTools", () => {
 
   it("get_current_mode execute returns current mode", async () => {
     registerWebMCPTools(
-      createToolRegistry(makeEditorCtx(), makeWorkspaceCtx()),
+      createToolRegistry(makeEditorCtx(), makeWorkspaceCtx(), skillsCtx),
     );
     expect(await registeredTools.get("get_current_mode")!.execute({})).toBe(
       "editor",

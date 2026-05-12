@@ -1,33 +1,31 @@
 // Copyright 2026 Andre Cipriani Bandarra
 // SPDX-License-Identifier: Apache-2.0
-import { useState } from "react";
-import { EditorPanel } from "@/components/EditorPanel";
-import { ChatSidebar } from "@/components/ChatSidebar";
-import { WorkspacePanel } from "@/components/WorkspacePanel";
-import { WorkspacePicker } from "@/components/WorkspacePicker";
+import { useState, useEffect, useRef } from "react";
 import {
-  MessageCircle,
-  ChevronDown,
-  BookOpen,
   PanelLeftClose,
   PanelLeftOpen,
-  PanelRightClose,
-  PanelRightOpen,
+  PanelBottomClose,
+  PanelBottomOpen,
   LayoutGrid,
+  Sun,
+  Moon,
+  Wand2,
+  Settings,
 } from "lucide-react";
-import { useAgentConfig } from "@/lib/store";
-import { useWorkspaces } from "@/lib/WorkspacesContext";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
+import { EditorPanel } from "@/components/EditorPanel";
+import { WorkspacePanel } from "@/components/WorkspacePanel";
+import { WorkspacePicker } from "@/components/WorkspacePicker";
+import { ApprovalModal } from "@/components/ApprovalModal";
+import { ToolLogPane } from "@/components/ToolLogPane";
+import { SettingsDialog } from "@/components/SettingsDialog";
+import { SkillsDialog } from "@/components/SkillsDialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { AgentProviderShim } from "@/context/AgentProviderShim";
-import { useEffect, useRef } from "react";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { useEditorUI } from "@/lib/store";
+import { useTheme } from "@/lib/ThemeProvider";
+import { useWorkspaces } from "@/lib/WorkspacesContext";
+import { MCPProvider } from "@/context/MCPProvider";
 
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(
@@ -42,37 +40,119 @@ function useIsMobile() {
   return isMobile;
 }
 
-function DesktopLayout() {
-  const [refOpen, setRefOpen] = useState(false);
-  const [chatOpen, setChatOpen] = useState(true);
-  const [chatWidth, setChatWidth] = useState(() => {
-    const stored = localStorage.getItem("chatPanelWidth");
-    return stored ? parseInt(stored, 10) : 400;
+function HeaderBar({
+  workspaceName,
+  onSwitchWorkspace,
+  onOpenSkills,
+  onOpenSettings,
+}: {
+  workspaceName: string | null;
+  onSwitchWorkspace: () => void;
+  onOpenSkills: () => void;
+  onOpenSettings: () => void;
+}) {
+  const { approveAll, setApproveAll } = useEditorUI();
+  const { theme, toggleTheme } = useTheme();
+  return (
+    <div className="flex items-center gap-2 px-3 h-10 border-b border-border shrink-0">
+      <span className="text-xs font-medium text-muted-foreground truncate flex-1">
+        {workspaceName ?? "WebMCP Text Editor"}
+      </span>
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <div className="flex items-center space-x-2">
+          <Switch
+            id="approve-all"
+            checked={approveAll}
+            onCheckedChange={setApproveAll}
+          />
+          <Label htmlFor="approve-all" className="text-xs">
+            Approve All
+          </Label>
+        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={toggleTheme}
+          aria-label={theme === "dark" ? "Switch to light" : "Switch to dark"}
+        >
+          {theme === "dark" ? (
+            <Sun className="w-4 h-4" />
+          ) : (
+            <Moon className="w-4 h-4" />
+          )}
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={onOpenSkills}
+          aria-label="Open skills"
+        >
+          <Wand2 className="w-4 h-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={onOpenSettings}
+          aria-label="Open settings"
+        >
+          <Settings className="w-4 h-4" />
+        </Button>
+        {workspaceName && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 text-xs"
+            onClick={onSwitchWorkspace}
+          >
+            <LayoutGrid className="w-3 h-3 mr-1" />
+            Switch
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DesktopLayout({
+  onOpenSkills,
+  onOpenSettings,
+}: {
+  onOpenSkills: () => void;
+  onOpenSettings: () => void;
+}) {
+  const [docsOpen, setDocsOpen] = useState(false);
+  const [logOpen, setLogOpen] = useState(true);
+  const [logHeight, setLogHeight] = useState(() => {
+    const stored = localStorage.getItem("logPanelHeight");
+    return stored ? parseInt(stored, 10) : 200;
   });
   const [isResizing, setIsResizing] = useState(false);
-  const chatWidthRef = useRef(chatWidth);
+  const logHeightRef = useRef(logHeight);
   const isDraggingRef = useRef(false);
-  const dragStartXRef = useRef(0);
-  const dragStartWidthRef = useRef(0);
+  const dragStartYRef = useRef(0);
+  const dragStartHeightRef = useRef(0);
   const { index, activeWorkspaceId, closeWorkspace } = useWorkspaces();
   const activeMeta = index.find((w) => w.id === activeWorkspaceId);
 
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => {
       if (!isDraggingRef.current) return;
-      const delta = dragStartXRef.current - e.clientX;
-      const newWidth = Math.max(
-        280,
-        Math.min(window.innerWidth * 0.5, dragStartWidthRef.current + delta),
+      const delta = dragStartYRef.current - e.clientY;
+      const newHeight = Math.max(
+        80,
+        Math.min(window.innerHeight * 0.7, dragStartHeightRef.current + delta),
       );
-      chatWidthRef.current = newWidth;
-      setChatWidth(newWidth);
+      logHeightRef.current = newHeight;
+      setLogHeight(newHeight);
     };
     const onMouseUp = () => {
       if (!isDraggingRef.current) return;
       isDraggingRef.current = false;
       setIsResizing(false);
-      localStorage.setItem("chatPanelWidth", String(chatWidthRef.current));
+      localStorage.setItem("logPanelHeight", String(logHeightRef.current));
     };
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
@@ -86,39 +166,36 @@ function DesktopLayout() {
     e.preventDefault();
     isDraggingRef.current = true;
     setIsResizing(true);
-    dragStartXRef.current = e.clientX;
-    dragStartWidthRef.current = chatWidthRef.current;
+    dragStartYRef.current = e.clientY;
+    dragStartHeightRef.current = logHeightRef.current;
   };
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground">
-      {/* Collapsible reference drawer */}
       <aside
         className={`shrink-0 border-r border-border flex flex-col overflow-hidden transition-[width] duration-300 ease-in-out ${
-          refOpen ? "w-[280px]" : "w-10"
+          docsOpen ? "w-[280px]" : "w-10"
         }`}
       >
         <div className="flex items-center border-b border-border h-10 shrink-0">
           <button
-            onClick={() => setRefOpen((v) => !v)}
+            onClick={() => setDocsOpen((v) => !v)}
             className="flex items-center justify-center w-10 h-10 hover:bg-muted/60 text-muted-foreground"
-            aria-label={
-              refOpen ? "Collapse reference drawer" : "Expand reference drawer"
-            }
+            aria-label={docsOpen ? "Collapse documents" : "Expand documents"}
           >
-            {refOpen ? (
+            {docsOpen ? (
               <PanelLeftClose className="w-4 h-4" />
             ) : (
               <PanelLeftOpen className="w-4 h-4" />
             )}
           </button>
-          {refOpen && (
+          {docsOpen && (
             <span className="text-xs font-medium text-muted-foreground ml-1 truncate">
               Documents
             </span>
           )}
         </div>
-        {refOpen && (
+        {docsOpen && (
           <div className="flex-1 min-h-0 overflow-hidden">
             <WorkspacePanel />
           </div>
@@ -126,181 +203,89 @@ function DesktopLayout() {
       </aside>
 
       <main className="flex-1 min-w-0 flex flex-col">
-        {activeMeta && (
-          <div className="flex items-center gap-2 px-3 h-10 border-b border-border shrink-0">
-            <span className="text-xs font-medium text-muted-foreground truncate flex-1">
-              {activeMeta.name}
-            </span>
-            <button
-              onClick={closeWorkspace}
-              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground px-2 py-1 rounded hover:bg-muted/60 shrink-0"
-              aria-label="Switch workspace"
-            >
-              <LayoutGrid className="w-3 h-3" />
-              Switch
-            </button>
+        <HeaderBar
+          workspaceName={activeMeta?.name ?? null}
+          onSwitchWorkspace={closeWorkspace}
+          onOpenSkills={onOpenSkills}
+          onOpenSettings={onOpenSettings}
+        />
+        <div className="flex-1 min-h-0 flex flex-col">
+          <div className="flex-1 min-h-0">
+            <EditorPanel />
           </div>
-        )}
-        <div className="flex-1 min-h-0">
-          <EditorPanel />
+          <div
+            className={`shrink-0 border-t border-border bg-background flex flex-col overflow-hidden relative${
+              isResizing ? "" : " transition-[height] duration-300 ease-in-out"
+            }`}
+            style={{ height: logOpen ? logHeight : 32 }}
+          >
+            {logOpen && (
+              <div
+                onMouseDown={handleResizeMouseDown}
+                className="absolute top-0 left-0 right-0 h-1 cursor-row-resize hover:bg-primary/30 z-10"
+              />
+            )}
+            <div className="flex items-center h-8 border-b border-border px-2 shrink-0 bg-muted/40">
+              <button
+                onClick={() => setLogOpen((v) => !v)}
+                className="flex items-center justify-center h-8 w-8 hover:bg-muted/60 text-muted-foreground"
+                aria-label={logOpen ? "Collapse log" : "Expand log"}
+              >
+                {logOpen ? (
+                  <PanelBottomClose className="w-4 h-4" />
+                ) : (
+                  <PanelBottomOpen className="w-4 h-4" />
+                )}
+              </button>
+              <span className="text-xs font-medium text-muted-foreground ml-1">
+                Tool Activity
+              </span>
+            </div>
+            {logOpen && (
+              <div className="flex-1 min-h-0 overflow-hidden bg-muted/20">
+                <ToolLogPane />
+              </div>
+            )}
+          </div>
         </div>
       </main>
-      {/* Collapsible chat sidebar */}
-      <aside
-        className={`shrink-0 border-l border-border flex flex-col overflow-hidden relative${
-          isResizing ? "" : " transition-[width] duration-300 ease-in-out"
-        }`}
-        style={{ width: chatOpen ? chatWidth : 40 }}
-      >
-        {chatOpen && (
-          <div
-            onMouseDown={handleResizeMouseDown}
-            className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/30 z-10"
-          />
-        )}
-        <div className="flex items-center border-b border-border h-10 shrink-0">
-          {chatOpen && (
-            <span className="text-xs font-medium text-muted-foreground ml-3 truncate flex-1">
-              AI Assistant
-            </span>
-          )}
-          <button
-            onClick={() => setChatOpen((v) => !v)}
-            className="flex items-center justify-center w-10 h-10 hover:bg-muted/60 text-muted-foreground shrink-0"
-            aria-label={
-              chatOpen ? "Collapse chat sidebar" : "Expand chat sidebar"
-            }
-          >
-            {chatOpen ? (
-              <PanelRightClose className="w-4 h-4" />
-            ) : (
-              <PanelRightOpen className="w-4 h-4" />
-            )}
-          </button>
-        </div>
-        {chatOpen && (
-          <div className="flex-1 min-h-0 overflow-hidden">
-            <ChatSidebar />
-          </div>
-        )}
-      </aside>
     </div>
   );
 }
 
-function MobileLayout() {
-  const [sheetOpen, setSheetOpen] = useState(false);
-  const [sheetMode, setSheetMode] = useState<"chat" | "reference">("chat");
+function MobileLayout({
+  onOpenSkills,
+  onOpenSettings,
+}: {
+  onOpenSkills: () => void;
+  onOpenSettings: () => void;
+}) {
   const { index, activeWorkspaceId, closeWorkspace } = useWorkspaces();
   const activeMeta = index.find((w) => w.id === activeWorkspaceId);
-  const sheetRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const el = sheetRef.current;
-    if (!el) return;
-    if (!sheetOpen) {
-      el.setAttribute("inert", "");
-      el.setAttribute("aria-hidden", "true");
-    } else {
-      el.removeAttribute("inert");
-      el.removeAttribute("aria-hidden");
-    }
-  }, [sheetOpen]);
-
-  const openSheet = (mode: "chat" | "reference") => {
-    setSheetMode(mode);
-    setSheetOpen(true);
-  };
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden bg-background text-foreground">
-      {/* Editor always mounted, full screen */}
-      <div className="h-full w-full flex flex-col">
-        {activeMeta && (
-          <div className="flex items-center gap-2 px-3 h-10 border-b border-border shrink-0">
-            <span className="text-xs font-medium text-muted-foreground truncate flex-1">
-              {activeMeta.name}
-            </span>
-            <button
-              onClick={closeWorkspace}
-              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground px-2 py-1 rounded hover:bg-muted/60 shrink-0"
-              aria-label="Switch workspace"
-            >
-              <LayoutGrid className="w-3 h-3" />
-              Switch
-            </button>
-          </div>
-        )}
-        <div className="flex-1 min-h-0">
-          <EditorPanel />
-        </div>
+    <div className="relative h-screen w-screen overflow-hidden bg-background text-foreground flex flex-col">
+      <HeaderBar
+        workspaceName={activeMeta?.name ?? null}
+        onSwitchWorkspace={closeWorkspace}
+        onOpenSkills={onOpenSkills}
+        onOpenSettings={onOpenSettings}
+      />
+      <div className="flex-1 min-h-0">
+        <EditorPanel />
       </div>
-
-      {/* FABs */}
-      {!sheetOpen && (
-        <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3">
-          <button
-            onClick={() => openSheet("reference")}
-            className="flex h-12 w-12 items-center justify-center rounded-full bg-secondary text-secondary-foreground shadow-lg border border-border"
-            aria-label="Open reference"
-          >
-            <BookOpen className="h-5 w-5" />
-          </button>
-          <button
-            onClick={() => openSheet("chat")}
-            className="flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg"
-            aria-label="Open chat"
-          >
-            <MessageCircle className="h-6 w-6" />
-          </button>
-        </div>
-      )}
-
-      {/* Bottom sheet overlay */}
-      <div
-        ref={sheetRef}
-        className={`fixed inset-x-0 bottom-0 z-50 flex flex-col rounded-t-2xl border-t border-border bg-background shadow-2xl transition-transform duration-300 ${
-          sheetOpen ? "translate-y-0" : "translate-y-full"
-        }`}
-        style={{ height: "70vh" }}
-      >
-        <div className="flex items-center justify-between border-b px-4 py-3">
-          <span className="font-medium">
-            {sheetMode === "chat" ? "AI Assistant" : "Reference"}
-          </span>
-          <button
-            onClick={() => {
-              (document.activeElement as HTMLElement)?.blur();
-              setSheetOpen(false);
-            }}
-            className="flex h-11 w-11 items-center justify-center rounded-full hover:bg-muted"
-            aria-label="Close chat"
-          >
-            <ChevronDown className="h-5 w-5" />
-          </button>
-        </div>
-        <div className="flex-1 min-h-0 overflow-hidden">
-          {sheetMode === "chat" ? <ChatSidebar /> : <WorkspacePanel />}
-        </div>
+      <div className="h-40 border-t border-border bg-muted/20 overflow-hidden">
+        <ToolLogPane />
       </div>
     </div>
   );
 }
 
 function AppContent() {
-  const { apiKey, setApiKey } = useAgentConfig();
   const { activeWorkspaceId } = useWorkspaces();
-  const [tempKey, setTempKey] = useState("");
-  const [showKeyDialog, setShowKeyDialog] = useState(!apiKey);
-
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [skillsOpen, setSkillsOpen] = useState(false);
   const isMobile = useIsMobile();
-
-  const handleSaveKey = () => {
-    if (tempKey.trim()) {
-      setApiKey(tempKey.trim());
-      setShowKeyDialog(false);
-    }
-  };
 
   if (!activeWorkspaceId) {
     return <WorkspacePicker />;
@@ -308,39 +293,28 @@ function AppContent() {
 
   return (
     <>
-      {isMobile ? <MobileLayout /> : <DesktopLayout />}
-
-      <Dialog open={showKeyDialog} onOpenChange={setShowKeyDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Enter Gemini API Key</DialogTitle>
-          </DialogHeader>
-          <div className="py-4">
-            <p className="text-sm text-muted-foreground mb-4">
-              To use the AI assistant, please provide your Google AI Studio API
-              key. Your key is stored locally in your browser.
-            </p>
-            <Input
-              type="password"
-              placeholder="API Key"
-              value={tempKey}
-              onChange={(e) => setTempKey(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSaveKey()}
-            />
-          </div>
-          <DialogFooter>
-            <Button onClick={handleSaveKey}>Save Key</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {isMobile ? (
+        <MobileLayout
+          onOpenSkills={() => setSkillsOpen(true)}
+          onOpenSettings={() => setSettingsOpen(true)}
+        />
+      ) : (
+        <DesktopLayout
+          onOpenSkills={() => setSkillsOpen(true)}
+          onOpenSettings={() => setSettingsOpen(true)}
+        />
+      )}
+      <ApprovalModal />
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <SkillsDialog open={skillsOpen} onOpenChange={setSkillsOpen} />
     </>
   );
 }
 
 export default function App() {
   return (
-    <AgentProviderShim>
+    <MCPProvider>
       <AppContent />
-    </AgentProviderShim>
+    </MCPProvider>
   );
 }

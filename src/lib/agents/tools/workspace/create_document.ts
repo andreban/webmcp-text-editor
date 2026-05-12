@@ -3,6 +3,7 @@
 
 import type { Tool, ToolContext, ToolDefinition } from "@mast-ai/core";
 import type { WorkspaceContext } from "./context";
+import { requestApproval } from "./request_approval";
 
 interface CreateDocumentArgs {
   title: string;
@@ -41,6 +42,13 @@ export class CreateDocumentTool implements Tool<CreateDocumentArgs, string> {
     if (!args.title?.trim()) {
       return JSON.stringify({ error: "title is required" });
     }
+    const approved = await requestApproval(
+      "create_document",
+      `Create document "${args.title}"`,
+      this.ctx.setPendingApprovals,
+      this.ctx.approveAllRef,
+    );
+    if (!approved) return JSON.stringify({ error: "Rejected by user" });
     const currentDoc = this.ctx.activeDocRef.current;
     if (currentDoc) {
       const content =

@@ -1,88 +1,100 @@
-# Technical Specification: AI Agent Text Editor
+# Technical Specification: WebMCP Text Editor
 
 ## Architecture
 
-The application is a single-page React application bundled with Vite. It consists of three main architectural components:
+A single-page React application bundled with Vite. There is no in-page agent loop — the page exposes its capabilities as WebMCP tools and is driven by an external agent.
 
-1. **The Editor (Monaco):** Handles text input, rendering, and provides an API for programmatic access. Bound to the active document of the active workspace.
-2. **The Agent (MAST):** Orchestrates the "think-act" loop. It uses a `ToolRegistry` to expose editor-specific and workspace-specific functions to the AI. The architecture supports multi-agent orchestration; the primary `AgentRunner` can spin up specialized sub-`AgentRunners` based on user-defined skills or for workspace document queries.
-3. **The Adapter (Google Gen AI):** A custom implementation of `LlmAdapter` that bridges `MAST` with the `@google/genai` SDK.
+Three layers:
 
-## Data Flow
+1. **Editor + workspace state.** Monaco editor and a `localStorage`-backed workspace store (documents, active workspace, skills). React contexts in `src/lib/store.tsx` and `src/lib/WorkspacesContext.tsx` are the source of truth.
+2. **Tool registry.** `ToolRegistry` from `@mast-ai/core` holds every tool — editor tools, workspace tools, skills tools, optional sub-agent delegation tools, and built-in AI tools.
+3. **WebMCP bridge.** `src/lib/WebMCPTools.ts` mirrors the registry into `navigator.modelContext`. Each `registerTool` call wraps the underlying `tool.call()` to record activity into a `ToolActivityLog` and forward sub-agent stream events as chatter.
 
-1. User enters a prompt in the chat sidebar. Any `@document` mention chips are resolved to `{ id, title }` pairs and prepended to the prompt.
-2. `AgentRunner` receives the prompt and passes it to the `GoogleGenAIAdapter`.
-3. The selected LLM (e.g., Gemini 3.1 Flash Lite Preview) decides whether to respond with text or call a tool.
-4. If a tool is called (e.g., `read`, `edit`, or `write`), the `ToolRegistry` executes the function. For modification tools (`edit`, `write`, workspace mutations), the UI intercepts the action to present the suggestion to the user, unless "approve all" mode is enabled.
-5. The result of the tool execution (or the user's feedback/decision from a suggestion) is returned to the LLM, and the loop continues until a final response is generated.
-6. If the task requires specialized knowledge, the main agent can call `delegate_to_skill`, invoking a sub-agent with specific instructions loaded from local storage. The sub-agent's results are returned to the main agent's context.
-7. For workspace document queries, `query_workspace_doc` and `query_workspace` spin up short-lived sub-`AgentRunners` that read document content and return focused summaries without loading the full content into the main agent's context.
+Sub-agent delegation (`invoke_*`, `delegate_to_skill`) uses an internal Gemini-backed `AgentRunner` factory. These tools are only exposed via WebMCP — nothing in the page UI triggers them directly.
 
-## Technical Stack
+## Data flow
 
-- **Frontend:** React 18, TypeScript, Vite.
-- **Styling:** Tailwind CSS.
-- **UI Components:** `shadcn/ui` (built on Radix UI).
+1. `MCPProvider` (`src/context/MCPProvider.tsx`) builds `EditorContext`, `WorkspaceContext`, and `SkillsContext` from React state and refs, instantiates a `ToolRegistry` (`createToolRegistry`), and runs `registerWebMCPTools` to mirror it into `navigator.modelContext`.
+2. The external agent invokes a tool via WebMCP. The bridge:
+   - Records a "tool-call" entry in `ToolActivityLog` with name, args, and `status: "pending"`.
+   - Builds a `ToolContext` whose `onEvent` callback records sub-agent stream events as chatter (`text_delta`, `thinking`, `tool_call_*`).
+   - Calls `tool.call(args, ctx)`.
+   - On resolution, updates the entry with `status: "ok"` and the stringified result. On error, updates with `status: "error"` and the error message.
+3. Mutating tools self-gate inside their `call()`:
+   - `edit`, `write` → `applySuggestion` queues a `Suggestion` into the editor UI store and returns a Promise that resolves when the user clicks Accept/Reject in the inline Monaco view zone.
+   - `create_document`, `rename_document`, `delete_document` → `requestApproval` queues an `ApprovalRequest` and returns a Promise the modal resolves.
+   - `invoke_planner` → queues a `PlanConfirmationRequest` resolved by the same modal.
+   - All of the above short-circuit to "approved" when `approveAll` is on.
+4. The Tool Activity pane subscribes to `ToolActivityLog` and renders entries with expandable args / result / chatter rows.
+
+## Technical stack
+
+- **Frontend:** React 19, TypeScript, Vite.
+- **Styling:** Tailwind CSS + `shadcn/ui` primitives on Radix UI.
 - **Editor:** `@monaco-editor/react`.
-- **LLM SDK:** `@google/genai`.
-- **Agent Framework:** `@mast-ai/core` (installed from npm).
-- **Testing:** `vitest`, `@testing-library/react`.
-- **Quality:** `eslint`, `prettier`.
+- **Diff:** `diff` (word-level) for the inline diff view.
+- **Agent runtime (sub-agents only):** `@mast-ai/core`, `@mast-ai/built-in-ai`, `@mast-ai/google-genai`, `@google/genai`.
+- **Testing:** Vitest, React Testing Library.
+- **Quality:** ESLint, Prettier.
 
-## License
+There is no dependency on `@mast-ai/react-ui` — the UI is fully custom.
 
-Apache-2.0
+## License headers
 
-## License Headers
-
-All source files must include the mandatory license header using the appropriate comment syntax:
-
-**TypeScript/JavaScript/CSS:**
+All source files start with:
 
 ```typescript
 // Copyright 2026 Andre Cipriani Bandarra
 // SPDX-License-Identifier: Apache-2.0
 ```
 
-**HTML:**
+(HTML uses an `<!-- … -->` block with the same wording.)
 
-```html
-<!--
-Copyright 2026 Andre Cipriani Bandarra
-SPDX-License-Identifier: Apache-2.0
--->
-```
-
-## Directory Structure
+## Directory structure
 
 ```text
 src/
-├── adapters/
-│   └── GoogleGenAIAdapter.ts
 ├── components/
-│   ├── ChatSidebar.tsx
-│   ├── EditorPanel.tsx
-│   ├── MarkdownContent.tsx
-│   ├── SettingsDialog.tsx
-│   ├── SkillsDialog.tsx
-│   ├── WorkspacePicker.tsx
-│   └── WorkspacePanel.tsx
+│   ├── ApprovalModal.tsx          # Modal for workspace-mutation approvals + plan confirmation
+│   ├── EditorPanel.tsx            # Monaco editor + preview tabs + tab-switch dialog
+│   ├── InlineSuggestions.tsx      # Manages Monaco view zones for edit/write suggestions
+│   ├── MarkdownContent.tsx        # Markdown renderer for the preview tab
+│   ├── SettingsDialog.tsx         # API key / model / theme
+│   ├── SkillsDialog.tsx           # Skill authoring UI
+│   ├── SuggestionCard.tsx         # Diff card + Accept/Reject buttons
+│   ├── ToolLogPane.tsx            # Bottom Tool Activity pane
+│   ├── WorkspacePanel.tsx         # Document navigator (left drawer)
+│   ├── WorkspacePicker.tsx        # Full-screen workspace switcher
+│   └── ui/                        # shadcn primitives
+├── context/
+│   └── MCPProvider.tsx            # Top-level wiring; exposes useMCP()
 ├── lib/
-│   ├── diffDecorations.ts
-│   ├── EditorTools.ts
-│   ├── skills.ts
-│   ├── store.tsx
+│   ├── agents/
+│   │   ├── AgentModel.ts
+│   │   ├── index.ts
+│   │   ├── roles/                 # planner/researcher/writer/reviewer/orchestrator/generic + factory
+│   │   ├── tools/
+│   │   │   ├── editor/            # read, read_selection, search, get_metadata,
+│   │   │   │                      # get_current_mode, request_switch_to_editor, edit, write
+│   │   │   ├── workspace/         # CRUD + read/query + request_approval helper
+│   │   │   ├── skills/            # list_skills, read_skill
+│   │   │   ├── delegation/        # invoke_*, delegate_to_skill
+│   │   │   └── registries.ts      # createToolRegistry
+│   │   └── types.ts
+│   ├── skills.ts                  # Default skill set + localStorage persistence
+│   ├── store.tsx                  # AgentConfig + EditorUI contexts
+│   ├── SupportingDocsContext.tsx
 │   ├── ThemeProvider.tsx
-│   ├── WebMCPTools.ts
-│   ├── workspace.ts
-│   ├── WorkspacesContext.tsx
-│   └── WorkspaceTools.ts
-├── App.tsx
-├── main.tsx
-└── App.css
+│   ├── toolActivityLog.ts         # Subscriber-based tool-call + chatter log
+│   ├── WebMCPTools.ts             # ToolRegistry → navigator.modelContext bridge
+│   ├── workspace.ts               # Workspace data types
+│   └── WorkspacesContext.tsx      # Workspace CRUD + active document state
+├── App.tsx                        # Layout (header, left drawer, editor, bottom pane)
+├── main.tsx                       # React root + providers
+└── index.css
 ```
 
-## Data Model
+## Data model
 
 ### Workspace
 
@@ -90,15 +102,15 @@ src/
 interface WorkspaceMeta {
   id: string; // crypto.randomUUID()
   name: string;
-  createdAt: number; // Date.now()
-  updatedAt: number; // Date.now()
+  createdAt: number;
+  updatedAt: number;
 }
 
 interface WorkspaceDocument {
-  id: string; // crypto.randomUUID()
+  id: string;
   title: string;
-  content: string; // raw text / markdown
-  updatedAt: number; // Date.now()
+  content: string;
+  updatedAt: number;
 }
 
 interface WorkspaceData {
@@ -114,201 +126,170 @@ interface WorkspaceData {
 | `workspaces_index`    | `JSON.stringify(WorkspaceMeta[])`  |
 | `workspace_{id}`      | `JSON.stringify(WorkspaceData)`    |
 | `active_workspace_id` | ID of the currently open workspace |
+| `gemini_api_key`      | Optional Gemini key (sub-agents)   |
+| `gemini_model_name`   | Selected model id                  |
+| `skills`              | `JSON.stringify(Skill[])`          |
+| `theme`               | `"light"` or `"dark"`              |
+| `logPanelHeight`      | Pixel height of the bottom pane    |
 
-Workspaces are stored independently so listing workspaces does not require deserializing all document content. `WorkspaceData` is loaded on demand when a workspace is opened.
+### Approval queues
 
-On first load, if `workspaces_index` does not exist, a migration runs: any `supporting_docs` data is imported into a default workspace named `"My Workspace"`, and `supporting_docs` is removed.
+```ts
+interface Suggestion {
+  id: string;
+  originalText: string;
+  replacementText: string;
+  status: "pending" | "accepted" | "rejected";
+  contextBefore: string;
+  contextAfter: string;
+  startLine: number;
+  revealInEditor?: () => void;
+  resolve: (value: "applied" | "rejected") => void;
+}
 
-## Component Breakdown
+interface ApprovalRequest {
+  id: string;
+  toolName: string;
+  description: string;
+  resolve: (accepted: boolean) => void;
+}
 
-### `workspace.ts`
+interface PlanConfirmationRequest {
+  plan: Plan;
+  resolve: (accepted: boolean) => void;
+}
+```
 
-Type definitions for `WorkspaceMeta`, `WorkspaceDocument`, and `WorkspaceData`.
+Each is held in `EditorUIContext` (`src/lib/store.tsx`) as an array (`suggestions`, `pendingApprovals`) or single slot (`pendingPlanConfirmation`).
 
-### `WorkspacesContext.tsx`
+## Component breakdown
 
-React context providing the full workspace API to the application:
+### `MCPProvider.tsx`
 
-- `index: WorkspaceMeta[]` — all workspace names and IDs.
-- `activeWorkspaceId: string | null`
-- `activeWorkspace: WorkspaceData | null` — loaded on demand.
-- `activeDocument: WorkspaceDocument | null` — derived from `activeWorkspace`.
-- `createWorkspace(name): WorkspaceMeta`
-- `openWorkspace(id)`
-- `renameWorkspace(id, newName)`
-- `deleteWorkspace(id)` — removes `workspace_{id}` and the index entry; if the deleted workspace was active, sets `activeWorkspaceId` to `null`.
-- `addDocument()`
-- `updateDocument(id, patch)` — debounced write to `localStorage`.
-- `deleteDocument(id)`
-- `setActiveDocumentId(id)` — persisted inside `workspace_{id}`.
-
-### `WorkspacePicker.tsx`
-
-Full-screen view shown when `activeWorkspaceId` is `null`. Displays all workspaces with:
-
-- Open, Rename (inline edit), and Delete (with confirmation) actions per workspace.
-- **New Workspace** button: prompts for a name, creates the workspace, and opens it immediately.
-
-Accessible from the editor header via a **Switch Workspace** button at any time.
-
-### `WorkspacePanel.tsx`
-
-Left drawer content shown when a workspace is open. Displays:
-
-- The active workspace name (read-only label; rename goes via `WorkspacePicker`).
-- All documents in the active workspace: click to open, double-click to rename, delete button per document.
-- Active document is visually highlighted.
-- **New Document** button: creates `"Untitled Document"` and activates it.
-
-### `GoogleGenAIAdapter.ts`
-
-Implements `LlmAdapter` interface:
-
-- `generate(request: AdapterRequest): Promise<AdapterResponse>`
-- Translates MAST messages/tools to `@google/genai` format.
-- Handles tool calls and streaming text/thought deltas from the model.
-- Captures `thoughtSignature` from function call parts for correct turn attribution.
-- Enables thinking mode (`ThinkingLevel.HIGH`) by default.
-- Instantiated with the user's selected model name (e.g., `gemini-3.1-flash-lite-preview`).
-
-### `EditorTools.ts`
-
-Registers tools that operate exclusively on the currently open document:
-
-- `read()`: `() => string`. Returns the complete content of the open document.
-- `read_selection()`: `() => string`. Returns text currently selected in the editor.
-- `search(query: string)`: `({ query: string }) => { results: { line: number, text: string }[] }`.
-- `get_metadata()`: `() => { wordCount: number, lineCount: number, cursor: { line: number, column: number } }`.
-- `get_current_mode()`: `() => "editor" | "preview"`. Returns whether the editor is in edit or Markdown preview mode.
-- `request_switch_to_editor()`: Prompts the user to switch from preview to editor mode before the agent makes edits.
-- `edit(originalText, replacementText)`: Proposes a targeted change. Contains hard size constraints to enforce surgical edits. Uses a Promise to pause agent execution until the user resolves the change. Diff decorations are computed via `diffDecorations.ts` at word granularity.
-- `write(content)`: Proposes full replacement of the open document, pausing execution until user approval.
-- `delegate_to_skill(skillName, task)`: Invokes a skill sub-agent.
-
-`read`, `edit`, and `write` are intentionally symmetric — all three operate on the open document only. To access other documents, the agent uses `WorkspaceTools`.
-
-### `WorkspaceTools.ts`
-
-Registers tools scoped to the active workspace. Receives a ref snapshot of `WorkspaceData` at call time (same pattern as `EditorTools` receiving the Monaco editor ref):
-
-- `get_active_doc_info()`: Returns `{ id, title }` of the currently open document.
-- `list_workspace_docs()`: Returns `[{ id, title }]` — no content.
-- `read_workspace_doc(id)`: Returns `{ title, content }` or `{ error: "Document not found" }`.
-- `query_workspace_doc(id, query)`: Spins up a short-lived `AgentRunner` with the document content and query; returns `{ summary }`. The `AgentRunner` factory is injected as a parameter for testability.
-- `query_workspace(query)`: Calls `list_workspace_docs`, then `query_workspace_doc` for each document sequentially, then passes all summaries to a synthesizer `AgentRunner`; returns `{ answer }`.
-- `create_document(title)`: Creates a new document (requires user approval). On apply, saves the current document's content and immediately syncs the Monaco model to `""` via `setEditorValueFn` — see "React State Synchronization for Agent Tools" below.
-- `rename_document(id, title)`: Renames an existing document (requires user approval).
-- `delete_document(id)`: Deletes a document (requires user approval).
-- `switch_active_document(id)`: Changes the active document in the editor. Saves the current document's content then immediately syncs Monaco to the new document's content via `setEditorValueFn` — see "React State Synchronization for Agent Tools" below.
-
-**Constructor parameters relevant to state sync:**
-
-- `setEditorValueFn: (content: string) => void` — calls `editorInstance.setValue(content)` on the Monaco instance. Used by `switch_active_document` and `create_document` to eagerly load the new document's content into Monaco before React's render cycle catches up. See "React State Synchronization for Agent Tools" below.
-
-### `diffDecorations.ts`
-
-Computes and applies inline diff decorations to the Monaco editor for a pending suggestion:
-
-- Uses `diff_match_patch` to compute word-level diffs between `originalText` and `replacementText`.
-- Applies Monaco decorations: removed words receive a red strikethrough class; added words are injected via `after.content` styled in green monospace.
-- Exported as `applyDiffDecorations(editor, suggestion)` and `clearDiffDecorations(editor, decorationIds)`.
+Top-level wiring component. Reads editor / workspace / skills state, builds the per-call refs (`editorRef`, `editorContentRef`, `activeTabRef`, `approveAllRef`, `docsRef`, `activeDocRef`, `skillsRef`), constructs the `EditorContext` / `WorkspaceContext` / `SkillsContext`, instantiates the `ToolRegistry`, asynchronously registers built-in AI tools and (when the Gemini API key is present) delegation tools, and runs `registerWebMCPTools`. Exposes `useMCP() → { registry, activityLog, factory }`.
 
 ### `WebMCPTools.ts`
 
-Bridges a `ToolRegistry` to `navigator.modelContext` (WebMCP API) so external browser agents can drive the editor. `registerWebMCPTools(registry)` subscribes to the registry's `tool-registered` / `tool-unregistered` events and registers each tool with WebMCP using a per-tool `AbortController` (the abort signal is how WebMCP unregisters). Tools that join the registry asynchronously (built-in AI tools after browser availability checks, delegation tools when an API key is configured) are picked up automatically; the returned cleanup aborts every controller and removes both listeners. If `registerTool` throws (e.g. an older WebMCP shape without `unregisterTool`), the bridge logs a warning and tears down without retrying.
+`registerWebMCPTools(registry, log?)`:
+
+- Subscribes to the registry's `tool-registered` / `tool-unregistered` events so asynchronously-registered tools (built-ins, delegation tools) join WebMCP automatically.
+- For each tool, calls `navigator.modelContext.registerTool({ name, description, inputSchema, execute }, { signal })`. The `AbortSignal` is how WebMCP unregisters; cleanup aborts every controller.
+- Wraps `execute`:
+  - `log.startCall(name, args)` → returns `callId`.
+  - Builds a `ToolContext` whose `onEvent` callback logs every non-`done` event as chatter linked to `callId`. This is what surfaces sub-agent activity (`text_delta`, `thinking`, `tool_call_*`) in the Tool Activity pane.
+  - Awaits `tool.call(args, ctx)`. On success → `log.finishCall(callId, { ok: true, result })`. On throw → `log.finishCall(callId, { ok: false, error })` then rethrow.
+- If `registerTool` throws (older WebMCP shape lacking `unregisterTool`), logs a warning and tears down without retrying.
+
+### `toolActivityLog.ts`
+
+`ToolActivityLog` is a small observable. Two entry shapes share a discriminator:
+
+```ts
+type ActivityEntry =
+  | ({ kind: "tool-call" } & ToolCallEntry)
+  | ({ kind: "chatter" } & SubAgentChatterEntry);
+```
+
+Caps at 500 entries (oldest dropped). `subscribe(listener)` replays the current snapshot on registration and on every change. `clear()` empties the log. The `ToolLogPane` is the only subscriber today.
+
+### Editor tools (`src/lib/agents/tools/editor/`)
+
+- `read`, `read_selection`, `search`, `get_metadata`, `get_current_mode` — pure reads.
+- `request_switch_to_editor` — sets `pendingTabSwitchRequest`; `EditorPanel` shows a modal.
+- `edit` — `requiresApproval: true`. Computes the change region, builds context-before / context-after lines, and calls `applySuggestion`. The Promise resolves once the user clicks Accept (which applies the Monaco edit and returns success) or Reject. Hard size guard rejects edits where `originalText` is longer than 3000 chars or > 80% of the document.
+- `write` — `requiresApproval: true`. Same `applySuggestion` flow for a whole-document replacement.
+
+`applySuggestion` (`src/lib/agents/tools/editor/apply_suggestion.ts`) is the shared helper. When `approveAllRef.current` is true it bypasses UI and applies immediately.
+
+### Workspace tools (`src/lib/agents/tools/workspace/`)
+
+- Read-only: `get_active_doc_info`, `list_workspace_docs`, `read_workspace_doc`, `query_workspace_doc`, `query_workspace` (latter two spin up short-lived `AgentRunner` instances via `factory`).
+- `switch_active_document` — eagerly syncs Monaco to the new document content before resolving (see "React state sync" below).
+- `create_document`, `rename_document`, `delete_document` — each calls `requestApproval(toolName, description, setPendingApprovals, approveAllRef)` before mutating. On reject they return `{ "error": "Rejected by user" }`.
+
+`requestApproval` (`src/lib/agents/tools/workspace/request_approval.ts`) is the helper. When `approveAllRef.current` is true it resolves true immediately; otherwise it pushes an `ApprovalRequest` and waits for the modal to resolve it.
+
+### Skills tools (`src/lib/agents/tools/skills/`)
+
+- `list_skills` — returns `[{ id, name, description }, …]` from `skillsRef.current`. No instructions.
+- `read_skill` — accepts `{ id }` or `{ name }` (case-insensitive); returns the full skill or `{ "error": "Skill not found" }`.
+
+These are how the external agent discovers skills before calling `delegate_to_skill`.
+
+### Delegation tools (`src/lib/agents/tools/delegation/`)
+
+`invoke_agent`, `invoke_planner`, `invoke_researcher`, `invoke_writer`, `invoke_reviewer`, `delegate_to_skill`. Each constructs an `AgentConfig` and uses the injected `AgentRunnerFactory` to run a sub-agent stream. Stream events are forwarded through `ctx.onEvent` so the WebMCP bridge can record them as chatter. Registered only when a Gemini API key is configured.
+
+### `InlineSuggestions.tsx`
+
+Manages Monaco view zones for pending `Suggestion` entries:
+
+- For each pending suggestion, creates a DOM node, sets `pointerEvents: auto`, `position: relative`, `zIndex: 10` so clicks aren't swallowed by Monaco's overlay layer, and adds a Monaco view zone with `heightInPx: 80` (initial).
+- A `ResizeObserver` watches each node and, when content size changes, updates the descriptor's `heightInPx` and calls `accessor.layoutZone(zoneId)` so Monaco re-lays the zone. This is what keeps Accept / Reject buttons reachable even on tall diffs at the bottom of the document.
+- Renders `SuggestionCard` into each view-zone node via `createPortal` so React owns the contents.
+- On unmount or removed suggestion, removes the view zone and disconnects the observer.
+
+### `SuggestionCard.tsx`
+
+The portal payload. Shows the word-level diff inside a `max-h-56 overflow-y-auto` scroll container so very tall diffs stay bounded, with the Accept / Reject buttons in a separate `shrink-0` footer that's always visible. Stops `mousedown` / `mouseup` / `click` propagation at the card level so Monaco doesn't steal focus or start a text selection when the user clicks the buttons.
+
+`SuggestionDiff` (same file) renders the word-level diff with `diffWords` from the `diff` package. Removed words get red strikethrough; added words get green; gutters show line numbers; the header has an optional **Reveal** button that calls `suggestion.revealInEditor()`.
+
+### `ApprovalModal.tsx`
+
+Single dialog component that renders the next pending workspace mutation approval (if any) or, failing that, the pending plan confirmation. Closing the dialog without choosing is treated as a reject. Workspace approvals show the tool name (mono-font) and a human-friendly description (`"Create document \"…\""`, `"Rename document \"X\" to \"Y\""`, `"Delete document \"…\""`). Plan confirmations show the plan's `goal` plus an ordered list of steps.
+
+### `ToolLogPane.tsx`
+
+Subscribes to `ToolActivityLog` via `useMCP().activityLog.subscribe(setEntries)`. Splits entries into tool calls + a `parentId → chatter[]` map. Renders each call as a collapsible row with name, args (truncated), status colour, and duration. Expanding a row reveals the full args, result/error, and chatter list. Auto-scrolls to the bottom unless the user has scrolled up. **Clear** button calls `activityLog.clear()`.
 
 ### `EditorPanel.tsx`
 
-Wraps the Monaco Editor. Reads initial content from `WorkspacesContext.activeDocument.content` and calls `updateDocument` on change (debounced 500 ms). Manages pending suggestions: renders diff decorations via `diffDecorations.ts` and shows a floating Accept/Reject toolbar positioned dynamically relative to the suggestion range. Includes a tab bar to toggle between editor and Markdown preview modes.
-
-### `ChatSidebar.tsx`
-
-Provides the streaming chat interface and message history. Key details:
-
-- Thin shell composing primitives from `@mast-ai/react-ui`: `<MessageList>` for the streaming/virtualised message log, `<ChatInput mentions>` for the chip-based input, `<InlineApproval>` (via a custom `WorkspaceApprovalCard` for friendlier copy) for inline tool approvals.
-- Passes a `getToolLabel` resolver to `<MessageList>` to relabel `delegate_to_skill` calls with the target skill's name, and a `renderApproval` slot that swaps in `WorkspaceApprovalCard` for `create_document` / `rename_document` / `delete_document` (everything else falls through to `<InlineApproval>`).
-- `<ChatInput mentions>` `@`-mention autocomplete: typing `@` opens a document picker; selected documents appear as chip tokens. A local `buildPrompt` callback prepends resolved `{ id, title }` pairs to the prompt so the agent can reference documents by ID without calling `list_workspace_docs`.
-- Wraps everything in `<div data-mast-root data-mast-theme={theme}>` so the library's CSS custom properties resolve across the whole sidebar (header chrome, dialogs, `PlanConfirmationWidget`) — not just the library children. As of `@mast-ai/react-ui` 0.3.0, `<AgentProvider>` is transparent in the DOM by default (`disableRoot` defaults to `true`), so we let the sidebar own the `data-mast-root` element and do not opt back into the auto-rendered wrapper (`disableRoot={false}`). Opting in would inject a layout-bare `<div data-mast-root>` that breaks the flex chain `<MessageList>`'s virtualizer needs to scroll. Token mapping is provided by the upstream `@mast-ai/react-ui/themes/tailwind-shadcn.css` preset (imported in `src/main.tsx`) so library components inherit the app theme — including dark mode toggled via the `.dark` class on `<html>`.
-- The library's `<MessageList>` virtualises the list internally with `@tanstack/react-virtual`.
-- On desktop, the sidebar is collapsible via a toggle button in the header.
-
-### `MarkdownContent.tsx`
-
-Renders Markdown content with syntax highlighting in the editor's Markdown preview tab. HTML output is sanitised to prevent XSS. (Chat-side markdown is handled by `<MessageList>` from `@mast-ai/react-ui` — this component is no longer used in the chat sidebar.)
-
-### `SettingsDialog.tsx`
-
-Modal dialog for configuring user preferences:
-
-- Google AI Studio API key input.
-- Model selector (list of supported Gemini models).
-- Theme toggle (light / dark).
-
-### `SkillsDialog.tsx`
-
-A dialog for creating, editing, and deleting custom skills.
+Wraps the Monaco editor in a Radix Tabs (`editor` / `preview`). Loads `activeDocument.content` into local state, debounces 500 ms writes back to `updateDocument`. Hosts `<InlineSuggestions editor={editorInstance} />` so view zones render inline. Shows a modal for `pendingTabSwitchRequest` (from `request_switch_to_editor`).
 
 ### `App.tsx`
 
-The main entry point:
+Layout shell. Wraps everything in `MCPProvider`. When no workspace is active, renders `WorkspacePicker`. Otherwise:
 
-- Manages global state (API key, selected model, active suggestions, "approve all" toggle, skills).
-- Wires editor and workspace tools into the `ToolRegistry` (via `AgentProviderShim`), passing the Monaco editor ref and a snapshot ref of `WorkspacesContext.activeWorkspace.documents` respectively.
-- `AgentProviderShim` exposes the live registry to external browser agents via `registerWebMCPTools` (see `WebMCPTools.ts`), independent of API-key configuration.
-- Dynamically constructs `AgentConfig.systemInstructions`: appends skill names/descriptions and workspace tool guidance.
-- Renders `WorkspacePicker` when no workspace is active, or the editor layout (`WorkspacePanel` + `EditorPanel` + `ChatSidebar`) when a workspace is open.
-- Handles responsive layout (desktop collapsible split-pane vs. mobile bottom-sheet).
+- **Desktop:** left drawer (`WorkspacePanel`, collapsible), main area with `HeaderBar` (workspace name, Approve All, theme, skills, settings, switch-workspace) → `EditorPanel` → bottom Tool Activity pane (resizable, collapsible).
+- **Mobile:** header bar, editor, fixed 160 px Tool Activity pane at the bottom.
 
-## Main Agent System Instructions
+In both modes `ApprovalModal`, `SettingsDialog`, and `SkillsDialog` mount at the top level.
 
-The primary agent should be configured with a system prompt that explains its role as an editor and its mandatory approval workflow:
+### `SettingsDialog.tsx`
 
-> You are a senior editorial assistant. You help the user refine their text.
->
-> - `read()`, `edit()`, and `write()` operate on the currently open document only.
-> - Always use `read()` or `read_selection()` before suggesting changes.
-> - CRITICAL: Prefer small, surgical edits using `edit()`. Do not rewrite the entire document unless explicitly asked to.
-> - All edits MUST be proposed via `edit()` or `write()`. Execution will PAUSE until user approval. Do not assume the change was applied until you receive a success confirmation.
-> - Use `list_workspace_docs`, `read_workspace_doc`, or `query_workspace_doc` / `query_workspace` to access other documents in the workspace.
-> - You have access to specialized sub-agents. Use them for focused tasks like proofreading.
+Gemini API key (password-masked, optional — only needed for delegation tools), model selector, theme toggle.
 
-## React State Synchronization for Agent Tools
+### `SkillsDialog.tsx`
 
-### The Problem
+CRUD UI for skills persisted in `localStorage`. Default skills (`Create Skill`, `Proofreader`, `Summarizer`, `Markdown Formatter`) are seeded on first run.
 
-Agent tools execute as async JavaScript outside React's event loop. When a tool calls a React state setter (e.g., `setActiveDocumentId`), React schedules a re-render — it does **not** update state synchronously. The tool's Promise can resolve before React has committed the new state to the DOM.
+## React state synchronization for agent tools
 
-For document-switching operations this creates a concrete bug: `switch_active_document` calls `setActiveDocumentId(id)` and returns. The agent immediately calls `read()` or `edit()`. But `EditorPanel` drives Monaco via two chained `useEffect` hooks (the first fires when `activeDocument` changes and calls `setLocalContent`; the second propagates `localContent` to the store as `editorContent`). Both effects are deferred until after the browser paints. Monaco therefore still holds the _previous_ document's content when the agent reads or edits it.
+### The problem
 
-The same race applies to `create_document`: the newly created document is switched in by the workspace context, but Monaco doesn't reflect it until the effects run.
+WebMCP tool calls resolve as async JavaScript outside React's render cycle. When a tool calls a React state setter (e.g. `setActiveDocumentId`), React schedules a re-render — it does **not** update state synchronously. The tool's Promise can resolve before React has committed the new state to the DOM. For document-switching, that means Monaco still holds the previous document's content when the agent immediately calls `read` or `edit`.
 
-### The Fix: Eager Monaco Sync
+### The fix: eager Monaco sync
 
-After calling any state setter that changes the active document, immediately call `editorInstance.setValue(newContent)` on the Monaco instance. This is safe because:
+Any tool that changes the active document — `switch_active_document`, `create_document` — calls `editorInstance.setValue(newContent)` directly on the Monaco instance after mutating React state. This works because `@monaco-editor/react` guards its controlled `value` prop: when the React render eventually catches up, the prop equals the model value and is a no-op. The debounced `onChange` handler also targets the _current_ `activeDocument` after the render, so debounced saves go to the right document.
 
-1. `@monaco-editor/react` guards its controlled `value` prop: it calls `editor.setValue` only when the incoming prop differs from the current model value. Once we've set the model directly, the subsequent prop update from React's render cycle is a no-op.
-2. Monaco's `onChange` fires synchronously from `setValue`. In `EditorPanel`, `handleChange` updates `localContent` and starts a debounced `updateDocument` save. By the time that debounce fires (500 ms), React has re-rendered and `activeDocument` refers to the new document — so the save targets the correct document.
-
-### Rule for Future Tools
-
-Any tool that changes the active document — whether by switching, creating, or any other mechanism — **must** call `setEditorValueFn(newContent)` after mutating React state. The canonical content to pass is the new document's `content` field from `docsRef`, or `""` for a newly created empty document. Do **not** rely on a `setTimeout` or `flushSync` to delay the Promise resolution; eagerly syncing Monaco is both more reliable and avoids artificial latency in the agent loop.
+The `setEditorValueFn` field on `WorkspaceContext` is the typed entry point for this. Do not work around the race with `setTimeout` or `flushSync`.
 
 ## Security
 
-- API keys are handled purely on the client side and are not stored on any backend.
-- Users are prompted to enter their Google AI Studio API key on first use.
-- The API key is persisted in the browser's `localStorage` so the user does not have to re-enter it on subsequent visits.
-- Markdown rendering output is HTML-sanitised to prevent XSS from untrusted document content.
+- API keys live only in `localStorage`. There is no backend; no key leaves the browser except in calls to the Gemini API.
+- Markdown rendering uses `react-markdown` with `rehype-sanitize` to prevent XSS from untrusted document content.
+- All WebMCP tools that mutate state require explicit user approval unless **Approve All** is on; the user always has visibility via the Tool Activity pane.
 
-## Implementation Details
+## Implementation details
 
-- **Vite Configuration:**
-  - Use `vite-plugin-monaco-editor` or configure `optimizeDeps` and `worker` settings to ensure Monaco's web workers are correctly bundled and loaded.
-  - Ensure `process.env` or similar is handled if the Google SDK expects it (though we should pass the key directly).
-- **Testing Strategy:** Use Vitest for unit testing adapters, tools, and state logic. Use React Testing Library for component rendering and interaction tests.
-- **Error Handling:**
-  - Graceful handling of API rate limits and invalid tool calls.
-  - Catch and display LLM errors (e.g., safety filters) in the chat UI.
-- **Styling:** Use Tailwind CSS for utility-first styling and `shadcn/ui` for complex components (e.g., Dialogs for Skills, workspace confirmation prompts).
-- **Dark Mode:** Use Tailwind CSS's class-based dark mode strategy (`darkMode: 'class'` in `tailwind.config`). A `ThemeProvider` wraps the app and toggles a `dark` class on the `<html>` element. The Monaco editor theme switches between `vs` (light) and `vs-dark` (dark) in sync. The selected theme is persisted in `localStorage`.
-- **Responsive Layout:** On screens narrower than the `md` breakpoint (768 px), the editor fills the screen and FABs open a bottom-sheet overlay for chat or the workspace panel. Touch targets must be at minimum 44 × 44 px. The Monaco editor renders in a flex-fill container so it uses available height without overflow.
+- **Vite:** uses `@monaco-editor/react`'s default worker bundling; no special config needed.
+- **Testing:** Vitest + Testing Library. Tool-level tests live next to each tool (e.g. `src/lib/agents/tools/skills/skills.test.ts`). UI components have RTL tests where they own behaviour. `toolActivityLog.test.ts` covers the observable.
+- **Linting:** ESLint with `react-hooks/refs` strict mode. The intentional `ref.current` reads in `InlineSuggestions.tsx` use a localised `eslint-disable-next-line` with a comment explaining why.
+- **Styling:** Tailwind class-based dark mode (`darkMode: "class"`). `ThemeProvider` toggles a `dark` class on `<html>` and persists the choice. Monaco theme switches between `vs` and `vs-dark`.
+- **Responsive:** below the `md` breakpoint (768 px) the editor takes the screen and the Tool Activity pane sits below it at a fixed 160 px. Dialogs fill the viewport.
+
+## License
+
+Apache-2.0

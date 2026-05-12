@@ -3,6 +3,7 @@
 
 import type { WorkspaceDocument } from "../../../workspace";
 import type { AgentRunnerFactory } from "../../";
+import type { ApprovalRequest } from "../../../store";
 
 export interface EditorLike {
   getValue(): string;
@@ -20,4 +21,8 @@ export interface WorkspaceContext {
   saveDocContentFn: (id: string, content: string) => void;
   editorRef: { current: EditorLike | null };
   editorContentRef: { current: string };
+  setPendingApprovals: (
+    fn: (prev: ApprovalRequest[]) => ApprovalRequest[],
+  ) => void;
+  approveAllRef: { current: boolean };
 }

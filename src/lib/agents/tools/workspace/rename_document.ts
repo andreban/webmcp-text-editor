@@ -3,6 +3,7 @@
 
 import type { Tool, ToolContext, ToolDefinition } from "@mast-ai/core";
 import type { WorkspaceContext } from "./context";
+import { requestApproval } from "./request_approval";
 
 interface RenameDocumentArgs {
   id: string;
@@ -41,6 +42,13 @@ export class RenameDocumentTool implements Tool<RenameDocumentArgs, string> {
     if (!doc) return JSON.stringify({ error: "Document not found" });
     if (!args.title?.trim())
       return JSON.stringify({ error: "title is required" });
+    const approved = await requestApproval(
+      "rename_document",
+      `Rename document "${doc.title}" to "${args.title}"`,
+      this.ctx.setPendingApprovals,
+      this.ctx.approveAllRef,
+    );
+    if (!approved) return JSON.stringify({ error: "Rejected by user" });
     this.ctx.renameDocumentFn(args.id, args.title);
     return `Document renamed to "${args.title}".`;
   }
