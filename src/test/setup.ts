@@ -43,3 +43,42 @@ vi.mock("@monaco-editor/react", () => ({
     });
   },
 }));
+
+// Mock robust localStorage
+class LocalStorageMock {
+  private store: Record<string, string> = {};
+
+  clear() {
+    this.store = {};
+  }
+
+  getItem(key: string) {
+    return this.store[key] !== undefined ? this.store[key] : null;
+  }
+
+  setItem(key: string, value: string) {
+    this.store[key] = String(value);
+  }
+
+  removeItem(key: string) {
+    delete this.store[key];
+  }
+
+  get length() {
+    return Object.keys(this.store).length;
+  }
+
+  key(index: number) {
+    return Object.keys(this.store)[index] || null;
+  }
+}
+
+const localStorageMock = new LocalStorageMock();
+Object.defineProperty(window, "localStorage", {
+  value: localStorageMock,
+  writable: true,
+});
+Object.defineProperty(global, "localStorage", {
+  value: localStorageMock,
+  writable: true,
+});

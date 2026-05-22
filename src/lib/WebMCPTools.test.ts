@@ -58,7 +58,10 @@ describe("registerWebMCPTools", () => {
   const registeredTools: Map<
     string,
     {
-      execute: (args: Record<string, unknown>) => unknown;
+      execute: (
+        args: Record<string, unknown>,
+        client?: { reportProgress?: (msg: string) => void },
+      ) => unknown;
       signal?: AbortSignal;
     }
   > = new Map();
@@ -71,7 +74,10 @@ describe("registerWebMCPTools", () => {
         (
           tool: {
             name: string;
-            execute: (args: Record<string, unknown>) => unknown;
+            execute: (
+              args: Record<string, unknown>,
+              client?: { reportProgress?: (msg: string) => void },
+            ) => unknown;
           },
           options?: { signal?: AbortSignal },
         ) => {
@@ -236,6 +242,49 @@ describe("registerWebMCPTools", () => {
     );
     expect(await registeredTools.get("get_current_mode")!.execute({})).toBe(
       "editor",
+    );
+  });
+
+  it("calls client.reportProgress when tool call triggers events", async () => {
+    const registry = createToolRegistry(
+      makeEditorCtx(),
+      makeWorkspaceCtx(),
+      skillsCtx,
+    );
+    const eventTool = {
+      definition: () => ({
+        name: "event_tool",
+        description: "triggers agent events",
+        parameters: { type: "object", properties: {} },
+        scope: "read" as const,
+      }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      call: vi.fn().mockImplementation(async (_args: any, ctx: any) => {
+        if (ctx?.onEvent) {
+          ctx.onEvent({ type: "thinking", delta: "analyzing" });
+          ctx.onEvent({ type: "text_delta", delta: "hello" });
+          ctx.onEvent({ type: "done", output: "finished", history: [] });
+        }
+        return "result content";
+      }),
+    };
+    registry.register(eventTool);
+    registerWebMCPTools(registry);
+
+    const reportProgress = vi.fn();
+    const executeResult = await registeredTools
+      .get("event_tool")!
+      .execute({}, { reportProgress });
+
+    expect(executeResult).toBe("result content");
+    expect(reportProgress).toHaveBeenCalledTimes(2);
+    expect(reportProgress).toHaveBeenNthCalledWith(
+      1,
+      JSON.stringify({ type: "thinking", delta: "analyzing" }),
+    );
+    expect(reportProgress).toHaveBeenNthCalledWith(
+      2,
+      JSON.stringify({ type: "text_delta", delta: "hello" }),
     );
   });
 });

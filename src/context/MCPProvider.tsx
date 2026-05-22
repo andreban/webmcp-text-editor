@@ -181,11 +181,11 @@ export function MCPProvider({ children }: { children: ReactNode }) {
   );
 
   useEffect(() => {
-    if (!factory) return;
-    registry.register(new DelegateToSkillTool(factory, registry.readOnly()));
+    const effFactory = workspaceCtx.factory;
+    registry.register(new DelegateToSkillTool(effFactory, registry.readOnly()));
     registerDelegationTools(
       registry,
-      factory,
+      effFactory,
       registry.readOnly(),
       workspaceCtx.docsRef,
       setPendingPlanConfirmation,
@@ -198,7 +198,7 @@ export function MCPProvider({ children }: { children: ReactNode }) {
       registry.unregister("invoke_writer");
       registry.unregister("invoke_reviewer");
     };
-  }, [registry, factory, workspaceCtx, setPendingPlanConfirmation]);
+  }, [registry, workspaceCtx, setPendingPlanConfirmation]);
 
   const value = useMemo<MCPContextValue>(
     () => ({ registry, activityLog, factory }),
