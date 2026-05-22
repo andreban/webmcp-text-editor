@@ -33,11 +33,18 @@ function describeEvent(event: AgentEvent): string {
   }
 }
 
+interface WebMCPClient {
+  reportProgress?: (message: string) => void;
+}
+
 interface WebMCPTool {
   name: string;
   description: string;
   inputSchema: object;
-  execute: (args: Record<string, unknown>) => string | Promise<string>;
+  execute: (
+    args: Record<string, unknown>,
+    client?: WebMCPClient,
+  ) => string | Promise<string>;
 }
 
 interface ModelContext {
@@ -78,17 +85,20 @@ export function registerWebMCPTools(
           name: def.name,
           description: def.description,
           inputSchema: def.parameters,
-          execute: async (args) => {
+          execute: async (args, client) => {
             const callId = log?.startCall(def.name, args);
-            const ctx: ToolContext =
-              log && callId
-                ? {
-                    onEvent: (event: AgentEvent) => {
-                      if (event.type === "done") return;
-                      log.chatter(callId, event.type, describeEvent(event));
-                    },
-                  }
-                : {};
+            const ctx: ToolContext = {
+              onEvent: (event: AgentEvent) => {
+                if (event.type === "done") return;
+                const description = describeEvent(event);
+                if (description && log && callId) {
+                  log.chatter(callId, event.type, description);
+                }
+                if (client?.reportProgress) {
+                  client.reportProgress(JSON.stringify(event));
+                }
+              },
+            };
             try {
               const result = (await tool.call(args as never, ctx)) as string;
               if (callId) log?.finishCall(callId, { ok: true, result });
