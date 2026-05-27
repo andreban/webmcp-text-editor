@@ -23,7 +23,7 @@ const sample: Skill[] = [
     name: "Beta",
     description: "Second",
     instructions: "Step 2.",
-    model: "gemini-2.5-pro",
+    model: "gemini-3.5-flash",
   },
 ];
 
@@ -56,7 +56,7 @@ describe("ReadSkillTool", () => {
     const tool = new ReadSkillTool(makeCtx(sample));
     const out = JSON.parse(await tool.call({ name: "beta" }, {}));
     expect(out.id).toBe("b");
-    expect(out.model).toBe("gemini-2.5-pro");
+    expect(out.model).toBe("gemini-3.5-flash");
   });
 
   it("returns error when neither id nor name is provided", async () => {
