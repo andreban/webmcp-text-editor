@@ -52,7 +52,7 @@ interface ModelContext {
 }
 
 declare global {
-  interface Navigator {
+  interface Document {
     modelContext?: ModelContext;
   }
 }
@@ -64,12 +64,12 @@ export function registerWebMCPTools(
   registry: ListenableRegistry,
   log?: ToolActivityLog,
 ): () => void {
-  if (!navigator.modelContext) {
+  if (!document.modelContext) {
     console.warn("WebMCP not detected in this browser.");
     return () => {};
   }
 
-  const mc = navigator.modelContext;
+  const mc = document.modelContext;
   const controllers = new Map<string, AbortController>();
   let teardown = false;
 

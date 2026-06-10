@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-A React SPA that exposes a Monaco-based text editor and a workspace document store to external AI agents via [WebMCP](https://github.com/webmachinelearning/webmcp). The page has no internal chat panel — agents drive it from outside through `navigator.modelContext.registerTool`. Approvals, edit diffs, and tool-call activity are rendered in the main UI.
+A React SPA that exposes a Monaco-based text editor and a workspace document store to external AI agents via [WebMCP](https://github.com/webmachinelearning/webmcp). The page has no internal chat panel — agents drive it from outside through `document.modelContext.registerTool`. Approvals, edit diffs, and tool-call activity are rendered in the main UI.
 
 ## Commands
 
@@ -19,13 +19,13 @@ npm run preview   # Preview production build
 
 ## Architecture
 
-**Top-level wiring:** `src/App.tsx` mounts a desktop/mobile layout containing `WorkspacePanel`, `EditorPanel`, `ToolLogPane`, `ApprovalModal`, and the Settings / Skills dialogs. The whole tree is wrapped in `MCPProvider` (`src/context/MCPProvider.tsx`), which builds the `ToolRegistry`, registers all tools, and mirrors them into `navigator.modelContext` through `src/lib/WebMCPTools.ts`.
+**Top-level wiring:** `src/App.tsx` mounts a desktop/mobile layout containing `WorkspacePanel`, `EditorPanel`, `ToolLogPane`, `ApprovalModal`, and the Settings / Skills dialogs. The whole tree is wrapped in `MCPProvider` (`src/context/MCPProvider.tsx`), which builds the `ToolRegistry`, registers all tools, and mirrors them into `document.modelContext` through `src/lib/WebMCPTools.ts`.
 
 **Data flow:**
 
 1. `MCPProvider` constructs `EditorContext`, `WorkspaceContext`, and `SkillsContext` from React state/refs in `src/lib/store.tsx` and `src/lib/WorkspacesContext.tsx`.
 2. `createToolRegistry` (`src/lib/agents/tools/registries.ts`) registers every tool (editor, workspace, skills) on a `ToolRegistry`. Delegation tools (`invoke_*`, `delegate_to_skill`) and built-in AI tools register asynchronously when an API key is available.
-3. `registerWebMCPTools` mirrors the registry into `navigator.modelContext`. Each external call is recorded in a `ToolActivityLog` (`src/lib/toolActivityLog.ts`) and its sub-agent events (`text_delta`, `thinking`, `tool_call_*`) are forwarded as chatter.
+3. `registerWebMCPTools` mirrors the registry into `document.modelContext`. Each external call is recorded in a `ToolActivityLog` (`src/lib/toolActivityLog.ts`) and its sub-agent events (`text_delta`, `thinking`, `tool_call_*`) are forwarded as chatter.
 4. Mutating tools self-gate inside their `call()` methods:
    - `edit` / `write` → `applySuggestion` queues a `Suggestion` and waits for inline Accept/Reject via Monaco view zones (`src/components/InlineSuggestions.tsx`).
    - `create_document` / `rename_document` / `delete_document` → `requestApproval` queues an `ApprovalRequest` resolved by the modal in `src/components/ApprovalModal.tsx`.
@@ -36,7 +36,7 @@ npm run preview   # Preview production build
 **Key modules:**
 
 - `src/context/MCPProvider.tsx` — top-level wiring; exposes `useMCP() → { registry, activityLog, factory }`.
-- `src/lib/WebMCPTools.ts` — `ToolRegistry` ↔ `navigator.modelContext` bridge; wraps each tool call to log activity and route sub-agent events to chatter.
+- `src/lib/WebMCPTools.ts` — `ToolRegistry` ↔ `document.modelContext` bridge; wraps each tool call to log activity and route sub-agent events to chatter.
 - `src/lib/toolActivityLog.ts` — observable log of tool calls + chatter, capped at 500 entries.
 - `src/lib/agents/tools/registries.ts` — builds the `ToolRegistry` from editor / workspace / skills contexts.
 - `src/lib/agents/tools/skills/` — `list_skills` and `read_skill` tools (read-only skill discovery for the external agent).
