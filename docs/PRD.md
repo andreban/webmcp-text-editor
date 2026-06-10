@@ -2,7 +2,7 @@
 
 ## Goal
 
-Provide a browser-based Monaco text editor that is fully driveable by **external** AI agents through the WebMCP API (`navigator.modelContext`). The page itself has no chat input — the agent lives in a parent context (browser extension, claude.ai tab, etc.) and operates the editor, workspace documents, and skills purely through tool calls. Approvals, edit diffs, and tool-call activity are surfaced in the main UI so the user stays in control of what the agent does.
+Provide a browser-based Monaco text editor that is fully driveable by **external** AI agents through the WebMCP API (`document.modelContext`). The page itself has no chat input — the agent lives in a parent context (browser extension, claude.ai tab, etc.) and operates the editor, workspace documents, and skills purely through tool calls. Approvals, edit diffs, and tool-call activity are surfaced in the main UI so the user stays in control of what the agent does.
 
 This project is forked from [agent-text-editor](https://github.com/andreban/agent-text-editor), which embeds an in-page Gemini agent. The fork keeps the editor and workspace functionality, drops the in-page chat, and exposes everything via WebMCP. A Gemini API key is still optional for sub-agent delegation tools (`invoke_planner`, `invoke_writer`, `delegate_to_skill`, …), which run internally but are only invokable by the external agent through WebMCP.
 
@@ -11,7 +11,7 @@ This project is forked from [agent-text-editor](https://github.com/andreban/agen
 - **Monaco editor** with light/dark theme and a togglable Markdown preview tab. Bound to the active document of the active workspace.
 - **Workspaces** stored in `localStorage`. Users create, rename, delete, and switch between workspaces via a workspace picker; each workspace holds its own document list.
 - **Document navigator** in the left drawer for the active workspace — create, rename, delete, and switch documents.
-- **WebMCP bridge** — every tool is mirrored into `navigator.modelContext` so a connected external agent can read and modify the editor and workspace. The bridge is the only agent surface.
+- **WebMCP bridge** — every tool is mirrored into `document.modelContext` so a connected external agent can read and modify the editor and workspace. The bridge is the only agent surface.
 - **Editor tools** (read scope unless marked):
   - `read`, `read_selection`, `search`, `get_metadata`, `get_current_mode`, `request_switch_to_editor`.
   - `edit` (targeted change, requires approval), `write` (full document replacement, requires approval).

@@ -69,7 +69,7 @@ describe("registerWebMCPTools", () => {
   beforeEach(() => {
     registeredTools.clear();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (navigator as any).modelContext = {
+    (document as any).modelContext = {
       registerTool: vi.fn(
         (
           tool: {
@@ -92,12 +92,12 @@ describe("registerWebMCPTools", () => {
 
   afterEach(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    delete (navigator as any).modelContext;
+    delete (document as any).modelContext;
   });
 
   it("returns a no-op cleanup and warns when registerTool throws (old API shape)", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (navigator as any).modelContext = {
+    (document as any).modelContext = {
       registerTool: vi.fn(() => {
         throw new TypeError("unregisterTool is not a function");
       }),
@@ -117,7 +117,7 @@ describe("registerWebMCPTools", () => {
   it("stops registering after the first registerTool throw", () => {
     let calls = 0;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (navigator as any).modelContext = {
+    (document as any).modelContext = {
       registerTool: vi.fn(() => {
         calls += 1;
         throw new TypeError("broken");
@@ -131,9 +131,9 @@ describe("registerWebMCPTools", () => {
     warnSpy.mockRestore();
   });
 
-  it("returns a no-op cleanup when navigator.modelContext is undefined", () => {
+  it("returns a no-op cleanup when document.modelContext is undefined", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    delete (navigator as any).modelContext;
+    delete (document as any).modelContext;
     const cleanup = registerWebMCPTools(
       createToolRegistry(makeEditorCtx(), makeWorkspaceCtx(), skillsCtx),
     );

@@ -8,13 +8,13 @@ Three layers:
 
 1. **Editor + workspace state.** Monaco editor and a `localStorage`-backed workspace store (documents, active workspace, skills). React contexts in `src/lib/store.tsx` and `src/lib/WorkspacesContext.tsx` are the source of truth.
 2. **Tool registry.** `ToolRegistry` from `@mast-ai/core` holds every tool — editor tools, workspace tools, skills tools, optional sub-agent delegation tools, and built-in AI tools.
-3. **WebMCP bridge.** `src/lib/WebMCPTools.ts` mirrors the registry into `navigator.modelContext`. Each `registerTool` call wraps the underlying `tool.call()` to record activity into a `ToolActivityLog` and forward sub-agent stream events as chatter.
+3. **WebMCP bridge.** `src/lib/WebMCPTools.ts` mirrors the registry into `document.modelContext`. Each `registerTool` call wraps the underlying `tool.call()` to record activity into a `ToolActivityLog` and forward sub-agent stream events as chatter.
 
 Sub-agent delegation (`invoke_*`, `delegate_to_skill`) uses an internal Gemini-backed `AgentRunner` factory. These tools are only exposed via WebMCP — nothing in the page UI triggers them directly.
 
 ## Data flow
 
-1. `MCPProvider` (`src/context/MCPProvider.tsx`) builds `EditorContext`, `WorkspaceContext`, and `SkillsContext` from React state and refs, instantiates a `ToolRegistry` (`createToolRegistry`), and runs `registerWebMCPTools` to mirror it into `navigator.modelContext`.
+1. `MCPProvider` (`src/context/MCPProvider.tsx`) builds `EditorContext`, `WorkspaceContext`, and `SkillsContext` from React state and refs, instantiates a `ToolRegistry` (`createToolRegistry`), and runs `registerWebMCPTools` to mirror it into `document.modelContext`.
 2. The external agent invokes a tool via WebMCP. The bridge:
    - Records a "tool-call" entry in `ToolActivityLog` with name, args, and `status: "pending"`.
    - Builds a `ToolContext` whose `onEvent` callback records sub-agent stream events as chatter (`text_delta`, `thinking`, `tool_call_*`).
@@ -86,7 +86,7 @@ src/
 │   ├── SupportingDocsContext.tsx
 │   ├── ThemeProvider.tsx
 │   ├── toolActivityLog.ts         # Subscriber-based tool-call + chatter log
-│   ├── WebMCPTools.ts             # ToolRegistry → navigator.modelContext bridge
+│   ├── WebMCPTools.ts             # ToolRegistry → document.modelContext bridge
 │   ├── workspace.ts               # Workspace data types
 │   └── WorkspacesContext.tsx      # Workspace CRUD + active document state
 ├── App.tsx                        # Layout (header, left drawer, editor, bottom pane)
@@ -173,7 +173,7 @@ Top-level wiring component. Reads editor / workspace / skills state, builds the 
 `registerWebMCPTools(registry, log?)`:
 
 - Subscribes to the registry's `tool-registered` / `tool-unregistered` events so asynchronously-registered tools (built-ins, delegation tools) join WebMCP automatically.
-- For each tool, calls `navigator.modelContext.registerTool({ name, description, inputSchema, execute }, { signal })`. The `AbortSignal` is how WebMCP unregisters; cleanup aborts every controller.
+- For each tool, calls `document.modelContext.registerTool({ name, description, inputSchema, execute }, { signal })`. The `AbortSignal` is how WebMCP unregisters; cleanup aborts every controller.
 - Wraps `execute`:
   - `log.startCall(name, args)` → returns `callId`.
   - Builds a `ToolContext` whose `onEvent` callback logs every non-`done` event as chatter linked to `callId`. This is what surfaces sub-agent activity (`text_delta`, `thinking`, `tool_call_*`) in the Tool Activity pane.
