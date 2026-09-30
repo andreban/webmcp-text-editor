@@ -19,27 +19,24 @@ export class InvokeWriterTool implements Tool<InvokeWriterArgs, string> {
     return {
       name: "invoke_writer",
       description:
-        "Generates draft text for a single targeted section from an instruction and optional research/style context. " +
-        "Returns { draft: string } — raw text only, no edits applied. " +
-        "After receiving the draft, apply it using edit() for the target section. " +
-        "Do NOT use this to rewrite the whole document at once — use invoke_planner to break full-document tasks into per-section steps.",
+        "Drafts text for one section and returns it without changing the document. Use when a section needs new or substantially rewritten prose, then apply the draft with edit_document. For whole-document work, plan per-section steps with invoke_planner first.",
       parameters: {
         type: "object",
         properties: {
           instruction: {
             type: "string",
             description:
-              "What to write. Be explicit: specify the target section, desired length, and any constraints.",
+              "What to write: the target section, desired length, and any constraints.",
           },
           researchContext: {
             type: "string",
             description:
-              "JSON-encoded ResearchResult from invoke_researcher. Inject when the draft should cite workspace sources.",
+              "The unmodified result of invoke_researcher, when the draft should cite workspace documents.",
           },
           styleContext: {
             type: "string",
             description:
-              "A verbatim excerpt from the document the Writer should match in tone, voice, and formatting.",
+              "A verbatim passage from the document whose tone, voice, and formatting the draft should match.",
           },
         },
         required: ["instruction"],

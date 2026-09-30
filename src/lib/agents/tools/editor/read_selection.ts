@@ -3,6 +3,7 @@
 
 import type { Tool, ToolContext, ToolDefinition } from "@mast-ai/core";
 import type { EditorContext } from "./context";
+import { MAX_PAGE_CHARS } from "../paginate";
 
 export class ReadSelectionTool implements Tool<Record<string, never>, string> {
   constructor(private ctx: EditorContext) {}
@@ -10,7 +11,8 @@ export class ReadSelectionTool implements Tool<Record<string, never>, string> {
   definition(): ToolDefinition {
     return {
       name: "read_selection",
-      description: "Reads the currently selected text in the editor.",
+      description:
+        "Returns the text the user has selected in the editor. Use when the user refers to 'this', 'the selection', or highlighted text.",
       parameters: { type: "object", properties: {} },
       scope: "read",
     };
@@ -18,9 +20,21 @@ export class ReadSelectionTool implements Tool<Record<string, never>, string> {
 
   async call(_args: Record<string, never>, _ctx: ToolContext): Promise<string> {
     const editor = this.ctx.editorRef.current;
-    if (!editor) return "";
-    const selection = editor.getSelection();
-    if (!selection) return "";
-    return editor.getModel()?.getValueInRange(selection) || "";
+    const selection = editor?.getSelection();
+    const text =
+      (selection && editor?.getModel()?.getValueInRange(selection)) || "";
+    if (!text) {
+      return JSON.stringify({
+        has_selection: false,
+        text: "",
+        suggestion:
+          "Nothing is selected. Ask the user to select text, or use read_document.",
+      });
+    }
+    return JSON.stringify({
+      has_selection: true,
+      text: text.slice(0, MAX_PAGE_CHARS),
+      truncated: text.length > MAX_PAGE_CHARS,
+    });
   }
 }

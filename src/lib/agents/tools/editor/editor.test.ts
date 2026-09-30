@@ -3,14 +3,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type * as monaco from "monaco-editor";
 import type { EditorContext } from "./context";
-import { ReadTool } from "./read";
 import { ReadSelectionTool } from "./read_selection";
-import { SearchTool } from "./search";
-import { GetMetadataTool } from "./get_metadata";
-import { GetCurrentModeTool } from "./get_current_mode";
+import { MAX_SEARCH_MATCHES, SearchDocumentTool } from "./search_document";
+import { GetEditorStateTool } from "./get_editor_state";
 import { RequestSwitchToEditorTool } from "./request_switch_to_editor";
-import { EditTool } from "./edit";
-import { WriteTool } from "./write";
+import { EditDocumentTool } from "./edit_document";
+import { RewriteDocumentTool } from "./rewrite_document";
+import type { Suggestion } from "../../../store";
 
 function makeCtx(
   overrides: Partial<EditorContext> = {},
@@ -27,55 +26,78 @@ function makeCtx(
   };
 }
 
-describe("ReadTool", () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let mockEditor: any;
+/** Captures the suggestion queued by edit_document / rewrite_document. */
+function lastSuggestion(setSuggestions: ReturnType<typeof vi.fn>): Suggestion {
+  const updateFn = setSuggestions.mock.calls[0][0];
+  return updateFn([])[0];
+}
 
-  beforeEach(() => {
-    mockEditor = { getValue: vi.fn().mockReturnValue("Initial content") };
+describe("GetEditorStateTool", () => {
+  function state(
+    ctx: EditorContext,
+    activeDoc: { id: string; title: string } | null = null,
+  ) {
+    return new GetEditorStateTool(ctx, { current: activeDoc })
+      .call({}, {})
+      .then((s) => JSON.parse(s));
+  }
+
+  it("reports mode, open document, and zero counts for an empty document", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const editor: any = {
+      getValue: () => "",
+      getSelection: () => null,
+    };
+    expect(
+      await state(makeCtx({}, editor), { id: "d1", title: "Essay" }),
+    ).toEqual({
+      document: { id: "d1", title: "Essay" },
+      mode: "editor",
+      has_selection: false,
+      stats: { characters: 0, words: 0, lines: 0 },
+    });
   });
 
-  it("returns editor content", async () => {
-    expect(await new ReadTool(makeCtx({}, mockEditor)).call({}, {})).toBe(
-      "Initial content",
+  it("counts characters, words, and lines", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const editor: any = {
+      getValue: () => "line one\nline two\nline three",
+      getSelection: () => null,
+    };
+    expect((await state(makeCtx({}, editor))).stats).toEqual({
+      characters: 28,
+      words: 6,
+      lines: 3,
+    });
+  });
+
+  it("reports preview mode and no open document", async () => {
+    const result = await state(
+      makeCtx({ activeTabRef: { current: "preview" } }),
     );
+    expect(result.mode).toBe("preview");
+    expect(result.document).toBeNull();
   });
 
-  it("returns empty string if editor not initialized and no fallback", async () => {
-    expect(await new ReadTool(makeCtx()).call({}, {})).toBe("");
-  });
-
-  it("falls back to editorContentRef when editor is null", async () => {
-    const ctx = makeCtx({ editorContentRef: { current: "fallback content" } });
-    expect(await new ReadTool(ctx).call({}, {})).toBe("fallback content");
-  });
-
-  it("falls back to editorContentRef when editor returns empty string", async () => {
-    mockEditor.getValue.mockReturnValue("");
-    const ctx = makeCtx(
-      { editorContentRef: { current: "fallback content" } },
-      mockEditor,
+  it("falls back to editorContentRef when the editor is not mounted", async () => {
+    const result = await state(
+      makeCtx({ editorContentRef: { current: "hello world" } }),
     );
-    expect(await new ReadTool(ctx).call({}, {})).toBe("fallback content");
+    expect(result.stats.words).toBe(2);
   });
 
-  it("prefers editor content over fallback when editor has content", async () => {
-    const ctx = makeCtx(
-      { editorContentRef: { current: "fallback content" } },
-      mockEditor,
-    );
-    expect(await new ReadTool(ctx).call({}, {})).toBe("Initial content");
-  });
-});
-
-describe("GetCurrentModeTool", () => {
-  it("returns editor mode by default", async () => {
-    expect(await new GetCurrentModeTool(makeCtx()).call({}, {})).toBe("editor");
-  });
-
-  it("returns preview mode from activeTabRef", async () => {
-    const ctx = makeCtx({ activeTabRef: { current: "preview" } });
-    expect(await new GetCurrentModeTool(ctx).call({}, {})).toBe("preview");
+  it("detects a non-empty selection", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const editor: any = {
+      getValue: () => "hello",
+      getSelection: () => ({
+        startLineNumber: 1,
+        startColumn: 1,
+        endLineNumber: 1,
+        endColumn: 3,
+      }),
+    };
+    expect((await state(makeCtx({}, editor))).has_selection).toBe(true);
   });
 });
 
@@ -96,64 +118,94 @@ describe("RequestSwitchToEditorTool", () => {
     );
   });
 
-  it("returns declined message when user rejects switch", async () => {
+  it("returns a REJECTED error when user declines the switch", async () => {
     const ctx = makeCtx({
       activeTabRef: { current: "preview" },
       requestTabSwitch: vi.fn().mockResolvedValue(false),
     });
-    expect(await new RequestSwitchToEditorTool(ctx).call({}, {})).toBe(
-      "User declined to switch to editor mode.",
+    const result = JSON.parse(
+      await new RequestSwitchToEditorTool(ctx).call({}, {}),
     );
+    expect(result).toMatchObject({
+      error: "User declined to switch to editor mode.",
+      code: "REJECTED",
+    });
   });
 });
 
-describe("SearchTool", () => {
+describe("SearchDocumentTool", () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let mockEditor: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let mockModel: any;
 
   beforeEach(() => {
-    mockModel = { findMatches: vi.fn() };
+    mockModel = {
+      findMatches: vi.fn(),
+      getLineContent: vi.fn().mockReturnValue("the Foo line"),
+      getValueInRange: vi.fn().mockReturnValue("Foo"),
+    };
     mockEditor = { getModel: vi.fn().mockReturnValue(mockModel) };
   });
 
-  it("returns error if editor not initialized", async () => {
-    expect(await new SearchTool(makeCtx()).call({ query: "hello" }, {})).toBe(
-      "Error: Editor not initialized.",
-    );
+  function search(query: string, editor = mockEditor) {
+    return new SearchDocumentTool(makeCtx({}, editor))
+      .call({ query }, {})
+      .then((s) => JSON.parse(s));
+  }
+
+  it("returns a retryable NOT_READY error if editor not initialized", async () => {
+    expect(await search("hello", null)).toMatchObject({
+      code: "NOT_READY",
+      retryable: true,
+    });
   });
 
-  it("returns error for empty query", async () => {
-    expect(
-      await new SearchTool(makeCtx({}, mockEditor)).call({ query: "" }, {}),
-    ).toBe("Error: query parameter is required.");
+  it("returns INVALID_INPUT for an empty query", async () => {
+    expect((await search("")).code).toBe("INVALID_INPUT");
   });
 
-  it("returns not-found message when no matches", async () => {
+  it("returns an empty match list when nothing matches", async () => {
     mockModel.findMatches.mockReturnValue([]);
-    expect(
-      await new SearchTool(makeCtx({}, mockEditor)).call({ query: "xyz" }, {}),
-    ).toBe('No occurrences of "xyz" found.');
+    expect(await search("xyz")).toEqual({
+      query: "xyz",
+      total: 0,
+      truncated: false,
+      matches: [],
+    });
   });
 
-  it("returns location of a single match", async () => {
+  it("returns location, exact text, and line context for each match", async () => {
     mockModel.findMatches.mockReturnValue([
       { range: { startLineNumber: 3, startColumn: 5 } },
     ]);
-    expect(
-      await new SearchTool(makeCtx({}, mockEditor)).call({ query: "foo" }, {}),
-    ).toBe('Found 1 occurrence(s) of "foo": line 3, col 5.');
+    expect((await search("foo")).matches).toEqual([
+      { line: 3, column: 5, text: "Foo", context: "the Foo line" },
+    ]);
   });
 
-  it("returns locations of multiple matches", async () => {
+  it("caps the number of matches and reports truncation", async () => {
+    mockModel.findMatches.mockReturnValue(
+      Array.from({ length: MAX_SEARCH_MATCHES + 5 }, (_, i) => ({
+        range: { startLineNumber: i + 1, startColumn: 1 },
+      })),
+    );
+    const result = await search("foo");
+    expect(result.total).toBe(MAX_SEARCH_MATCHES + 5);
+    expect(result.truncated).toBe(true);
+    expect(result.matches).toHaveLength(MAX_SEARCH_MATCHES);
+  });
+
+  it("keeps the match visible in the context of a long line", async () => {
+    const line = `${"a".repeat(300)}Foo${"b".repeat(300)}`;
+    mockModel.getLineContent.mockReturnValue(line);
     mockModel.findMatches.mockReturnValue([
-      { range: { startLineNumber: 1, startColumn: 1 } },
-      { range: { startLineNumber: 5, startColumn: 10 } },
+      { range: { startLineNumber: 1, startColumn: 301 } },
     ]);
-    expect(
-      await new SearchTool(makeCtx({}, mockEditor)).call({ query: "foo" }, {}),
-    ).toBe('Found 2 occurrence(s) of "foo": line 1, col 1; line 5, col 10.');
+    const { context } = (await search("foo")).matches[0];
+    expect(context).toContain("Foo");
+    expect(context.startsWith("…")).toBe(true);
+    expect(context.endsWith("…")).toBe(true);
   });
 });
 
@@ -171,14 +223,18 @@ describe("ReadSelectionTool", () => {
     };
   });
 
-  it("returns empty string if editor not initialized", async () => {
-    expect(await new ReadSelectionTool(makeCtx()).call({}, {})).toBe("");
+  it("reports no selection if editor not initialized", async () => {
+    expect(
+      JSON.parse(await new ReadSelectionTool(makeCtx()).call({}, {})),
+    ).toMatchObject({ has_selection: false, text: "" });
   });
 
-  it("returns empty string when selection is null", async () => {
+  it("reports no selection when selection is null", async () => {
     expect(
-      await new ReadSelectionTool(makeCtx({}, mockEditor)).call({}, {}),
-    ).toBe("");
+      JSON.parse(
+        await new ReadSelectionTool(makeCtx({}, mockEditor)).call({}, {}),
+      ),
+    ).toMatchObject({ has_selection: false });
   });
 
   it("returns the selected text", async () => {
@@ -191,168 +247,163 @@ describe("ReadSelectionTool", () => {
     mockEditor.getSelection.mockReturnValue(selection);
     mockModel.getValueInRange.mockReturnValue("hello");
     expect(
-      await new ReadSelectionTool(makeCtx({}, mockEditor)).call({}, {}),
-    ).toBe("hello");
+      JSON.parse(
+        await new ReadSelectionTool(makeCtx({}, mockEditor)).call({}, {}),
+      ),
+    ).toEqual({ has_selection: true, text: "hello", truncated: false });
     expect(mockModel.getValueInRange).toHaveBeenCalledWith(selection);
   });
 });
 
-describe("GetMetadataTool", () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let mockEditor: any;
-
-  beforeEach(() => {
-    mockEditor = { getValue: vi.fn() };
-  });
-
-  it("returns error if editor not initialized", async () => {
-    expect(await new GetMetadataTool(makeCtx()).call({}, {})).toBe(
-      "Error: Editor not initialized.",
-    );
-  });
-
-  it("returns zero counts for empty document", async () => {
-    mockEditor.getValue.mockReturnValue("");
-    expect(
-      await new GetMetadataTool(makeCtx({}, mockEditor)).call({}, {}),
-    ).toBe("Characters: 0, Words: 0, Lines: 0.");
-  });
-
-  it("returns correct counts for single-line document", async () => {
-    mockEditor.getValue.mockReturnValue("hello world");
-    expect(
-      await new GetMetadataTool(makeCtx({}, mockEditor)).call({}, {}),
-    ).toBe("Characters: 11, Words: 2, Lines: 1.");
-  });
-
-  it("returns correct line count for multi-line document", async () => {
-    mockEditor.getValue.mockReturnValue("line one\nline two\nline three");
-    expect(
-      await new GetMetadataTool(makeCtx({}, mockEditor)).call({}, {}),
-    ).toBe("Characters: 28, Words: 6, Lines: 3.");
-  });
-});
-
-describe("EditTool", () => {
+describe("EditDocumentTool", () => {
+  const RANGE = {
+    startLineNumber: 1,
+    startColumn: 1,
+    endLineNumber: 1,
+    endColumn: 4,
+  };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let mockEditor: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let mockModel: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let tracker: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let setSuggestions: any;
 
   beforeEach(() => {
     mockModel = {
-      findMatches: vi.fn(),
+      findMatches: vi.fn().mockReturnValue([{ range: RANGE }]),
       pushEditOperations: vi.fn(),
       getOffsetAt: vi.fn().mockReturnValue(0),
       getPositionAt: vi.fn().mockReturnValue({ lineNumber: 1, column: 1 }),
+      getValueInRange: vi.fn().mockReturnValue("old"),
     };
+    tracker = { clear: vi.fn(), getRange: vi.fn().mockReturnValue(RANGE) };
     mockEditor = {
       getValue: vi.fn().mockReturnValue("old content"),
       setValue: vi.fn(),
       getModel: vi.fn().mockReturnValue(mockModel),
       revealRangeInCenter: vi.fn(),
-      createDecorationsCollection: vi.fn().mockReturnValue({ clear: vi.fn() }),
+      createDecorationsCollection: vi.fn().mockReturnValue(tracker),
     };
     setSuggestions = vi.fn();
   });
 
-  it("returns error if text not found", async () => {
+  function edit(
+    originalText: string,
+    overrides: Partial<EditorContext> = {},
+    editor = mockEditor,
+  ) {
+    return new EditDocumentTool(
+      makeCtx({ setSuggestions, ...overrides }, editor),
+    ).call({ originalText, replacementText: "new" }, {});
+  }
+
+  it("returns a retryable NOT_READY error if editor not initialized", async () => {
+    expect(JSON.parse(await edit("old", {}, null))).toMatchObject({
+      code: "NOT_READY",
+      retryable: true,
+    });
+  });
+
+  it("returns NOT_FOUND with a hint if text not found", async () => {
     mockModel.findMatches.mockReturnValue([]);
-    const ctx = makeCtx({ setSuggestions }, mockEditor);
-    const result = await new EditTool(ctx).call(
-      { originalText: "missing", replacementText: "found" },
-      {},
-    );
-    expect(result).toBe(
-      'Error: Could not find the text "missing" in the document.',
-    );
+    const result = JSON.parse(await edit("missing"));
+    expect(result.code).toBe("NOT_FOUND");
+    expect(result.error).toContain('"missing"');
+    expect(result.suggestion).toContain("search_document");
+  });
+
+  it("truncates long missing text in the error", async () => {
+    mockModel.findMatches.mockReturnValue([]);
+    const result = JSON.parse(await edit("x".repeat(500)));
+    expect(result.error.length).toBeLessThan(150);
+  });
+
+  it("returns AMBIGUOUS without queuing a suggestion when the text occurs more than once", async () => {
+    mockModel.findMatches.mockReturnValue([
+      { range: RANGE },
+      { range: { ...RANGE, startLineNumber: 7, endLineNumber: 7 } },
+    ]);
+    const result = JSON.parse(await edit("old"));
+    expect(result.code).toBe("AMBIGUOUS");
+    expect(result.error).toContain("2 times (lines 1, 7)");
+    expect(setSuggestions).not.toHaveBeenCalled();
+  });
+
+  it("returns INVALID_INPUT for empty originalText", async () => {
+    expect(JSON.parse(await edit("")).code).toBe("INVALID_INPUT");
+  });
+
+  it("points to rewrite_document when originalText is too large", async () => {
+    const result = JSON.parse(await edit("x".repeat(3001)));
+    expect(result.code).toBe("INVALID_INPUT");
+    expect(result.suggestion).toContain("rewrite_document");
   });
 
   it("creates a suggestion and resolves with accepted message on apply", async () => {
-    mockModel.findMatches.mockReturnValue([
-      {
-        range: {
-          startLineNumber: 1,
-          startColumn: 1,
-          endLineNumber: 1,
-          endColumn: 4,
-        },
-      },
-    ]);
-    mockModel.getOffsetAt.mockReturnValue(0);
-    const ctx = makeCtx({ setSuggestions }, mockEditor);
-    const promise = new EditTool(ctx).call(
-      { originalText: "old", replacementText: "new" },
-      {},
-    );
+    const promise = edit("old");
+    const suggestion = lastSuggestion(setSuggestions);
+    expect(suggestion.status).toBe("pending");
 
-    expect(setSuggestions).toHaveBeenCalled();
-    const updateFn = setSuggestions.mock.calls[0][0];
-    const newSuggestions = updateFn([]);
-    expect(newSuggestions).toHaveLength(1);
-    expect(newSuggestions[0].status).toBe("pending");
-
-    newSuggestions[0].resolve("applied");
+    suggestion.resolve("applied");
     expect(await promise).toBe(
       "User accepted the edit. The document has been updated.",
     );
-    expect(mockModel.pushEditOperations).toHaveBeenCalled();
+    expect(mockModel.pushEditOperations).toHaveBeenCalledWith(
+      [],
+      [{ range: RANGE, text: "new" }],
+      expect.any(Function),
+    );
+    expect(tracker.clear).toHaveBeenCalled();
   });
 
-  it("creates a suggestion and resolves with rejected message on reject", async () => {
-    mockModel.findMatches.mockReturnValue([
-      {
-        range: {
-          startLineNumber: 1,
-          startColumn: 1,
-          endLineNumber: 1,
-          endColumn: 4,
-        },
-      },
-    ]);
-    mockModel.getOffsetAt.mockReturnValue(0);
-    const ctx = makeCtx({ setSuggestions }, mockEditor);
-    const promise = new EditTool(ctx).call(
-      { originalText: "old", replacementText: "new" },
-      {},
+  it("applies the edit where the text has moved to while pending", async () => {
+    const moved = { ...RANGE, startLineNumber: 3, endLineNumber: 3 };
+    const promise = edit("old");
+    tracker.getRange.mockReturnValue(moved);
+    lastSuggestion(setSuggestions).resolve("applied");
+    await promise;
+    expect(mockModel.pushEditOperations).toHaveBeenCalledWith(
+      [],
+      [{ range: moved, text: "new" }],
+      expect.any(Function),
     );
+  });
 
-    const updateFn = setSuggestions.mock.calls[0][0];
-    const newSuggestions = updateFn([]);
-    newSuggestions[0].resolve("rejected");
-    expect(await promise).toBe("User rejected the edit.");
+  it("refuses with STALE_EDIT when the target text changed while pending", async () => {
+    const promise = edit("old");
+    mockModel.getValueInRange.mockReturnValue("olden");
+    lastSuggestion(setSuggestions).resolve("applied");
+    expect(JSON.parse(await promise)).toMatchObject({
+      code: "STALE_EDIT",
+      retryable: true,
+    });
     expect(mockModel.pushEditOperations).not.toHaveBeenCalled();
+    expect(tracker.clear).toHaveBeenCalled();
+  });
+
+  it("resolves with a REJECTED error on reject", async () => {
+    const promise = edit("old");
+    lastSuggestion(setSuggestions).resolve("rejected");
+    expect(JSON.parse(await promise)).toMatchObject({
+      error: "User rejected the edit.",
+      code: "REJECTED",
+    });
+    expect(mockModel.pushEditOperations).not.toHaveBeenCalled();
+    expect(tracker.clear).toHaveBeenCalled();
   });
 
   it("applies edit immediately if approveAll is true", async () => {
-    mockModel.findMatches.mockReturnValue([
-      {
-        range: {
-          startLineNumber: 1,
-          startColumn: 1,
-          endLineNumber: 1,
-          endColumn: 4,
-        },
-      },
-    ]);
-    mockModel.getOffsetAt.mockReturnValue(0);
-    const ctx = makeCtx(
-      { setSuggestions, approveAllRef: { current: true } },
-      mockEditor,
-    );
-    const result = await new EditTool(ctx).call(
-      { originalText: "old", replacementText: "new" },
-      {},
-    );
+    const result = await edit("old", { approveAllRef: { current: true } });
     expect(result).toBe("Change applied automatically (Approve All is ON).");
     expect(mockModel.pushEditOperations).toHaveBeenCalled();
     expect(setSuggestions).not.toHaveBeenCalled();
   });
 });
 
-describe("WriteTool", () => {
+describe("RewriteDocumentTool", () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let mockEditor: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -367,39 +418,55 @@ describe("WriteTool", () => {
     setSuggestions = vi.fn();
   });
 
+  it("returns a retryable NOT_READY error if editor not initialized", async () => {
+    const result = await new RewriteDocumentTool(makeCtx()).call(
+      { content: "x" },
+      {},
+    );
+    expect(JSON.parse(result)).toMatchObject({ code: "NOT_READY" });
+  });
+
   it("creates a suggestion for the full document if not approveAll", async () => {
     const ctx = makeCtx({ setSuggestions }, mockEditor);
-    const promise = new WriteTool(ctx).call(
+    const promise = new RewriteDocumentTool(ctx).call(
       { content: "New document content" },
       {},
     );
 
-    expect(setSuggestions).toHaveBeenCalled();
-    const updateFn = setSuggestions.mock.calls[0][0];
-    const newSuggestions = updateFn([]);
-    expect(newSuggestions).toHaveLength(1);
-    expect(newSuggestions[0].originalText).toBe("Initial content");
-    expect(newSuggestions[0].replacementText).toBe("New document content");
-    expect(newSuggestions[0].status).toBe("pending");
+    const suggestion = lastSuggestion(setSuggestions);
+    expect(suggestion.originalText).toBe("Initial content");
+    expect(suggestion.replacementText).toBe("New document content");
+    expect(suggestion.status).toBe("pending");
 
-    newSuggestions[0].resolve("rejected");
-    expect(await promise).toBe("User rejected the edit.");
+    suggestion.resolve("rejected");
+    expect(JSON.parse(await promise).code).toBe("REJECTED");
   });
 
   it("resolves with accepted message when user applies", async () => {
     const ctx = makeCtx({ setSuggestions }, mockEditor);
-    const promise = new WriteTool(ctx).call(
+    const promise = new RewriteDocumentTool(ctx).call(
       { content: "New document content" },
       {},
     );
 
-    const updateFn = setSuggestions.mock.calls[0][0];
-    const newSuggestions = updateFn([]);
-    newSuggestions[0].resolve("applied");
+    lastSuggestion(setSuggestions).resolve("applied");
     expect(await promise).toBe(
       "User accepted the edit. The document has been updated.",
     );
     expect(mockEditor.setValue).toHaveBeenCalledWith("New document content");
+  });
+
+  it("refuses with STALE_EDIT when the user typed while it was pending", async () => {
+    const ctx = makeCtx({ setSuggestions }, mockEditor);
+    const promise = new RewriteDocumentTool(ctx).call(
+      { content: "New document content" },
+      {},
+    );
+
+    mockEditor.getValue.mockReturnValue("Initial content, plus typing");
+    lastSuggestion(setSuggestions).resolve("applied");
+    expect(JSON.parse(await promise).code).toBe("STALE_EDIT");
+    expect(mockEditor.setValue).not.toHaveBeenCalled();
   });
 
   it("applies full replacement immediately if approveAll is true", async () => {
@@ -407,7 +474,7 @@ describe("WriteTool", () => {
       { setSuggestions, approveAllRef: { current: true } },
       mockEditor,
     );
-    const result = await new WriteTool(ctx).call(
+    const result = await new RewriteDocumentTool(ctx).call(
       { content: "New document content" },
       {},
     );

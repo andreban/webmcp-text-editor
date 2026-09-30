@@ -19,8 +19,12 @@ import type { EditorContext } from "@/lib/agents/tools/editor/context";
 import type { WorkspaceContext } from "@/lib/agents/tools/workspace/context";
 import type { SkillsContext } from "@/lib/agents/tools/skills/context";
 import { DelegateToSkillTool } from "@/lib/agents/tools/delegation/delegate_to_skill";
+import { QueryWorkspaceDocTool } from "@/lib/agents/tools/workspace/query_workspace_doc";
 import { createToolRegistry } from "@/lib/agents/tools/registries";
-import { registerDelegationTools } from "@/lib/agents/tools/delegation";
+import {
+  DELEGATION_TOOL_NAMES,
+  registerDelegationTools,
+} from "@/lib/agents/tools/delegation";
 import { registerWebMCPTools } from "@/lib/WebMCPTools";
 import { ToolActivityLog } from "@/lib/toolActivityLog";
 import { useAgentConfig, useEditorUI } from "@/lib/store";
@@ -144,7 +148,6 @@ export function MCPProvider({ children }: { children: ReactNode }) {
     () => ({
       docsRef,
       activeDocRef,
-      factory: factory ?? new DefaultAgentRunnerFactory("", ""),
       createDocumentFn: (title) => createDocumentWithTitle(title),
       renameDocumentFn: (id, title) => updateDocument(id, { title }),
       deleteDocumentFn: (id) => deleteDocument(id),
@@ -156,7 +159,6 @@ export function MCPProvider({ children }: { children: ReactNode }) {
       approveAllRef,
     }),
     [
-      factory,
       createDocumentWithTitle,
       updateDocument,
       deleteDocument,
@@ -180,25 +182,27 @@ export function MCPProvider({ children }: { children: ReactNode }) {
     [registry, activityLog],
   );
 
+  // Model-backed tools only exist while an API key is configured, so agents
+  // never see tools that would fail on every call.
   useEffect(() => {
-    const effFactory = workspaceCtx.factory;
-    registry.register(new DelegateToSkillTool(effFactory, registry.readOnly()));
+    if (!factory) return;
+    registry.register(new QueryWorkspaceDocTool(workspaceCtx, factory));
+    registry.register(
+      new DelegateToSkillTool(factory, registry.readOnly(), skillsCtx),
+    );
     registerDelegationTools(
       registry,
-      effFactory,
+      factory,
       registry.readOnly(),
-      workspaceCtx.docsRef,
+      workspaceCtx,
       setPendingPlanConfirmation,
     );
     return () => {
+      registry.unregister("query_workspace_doc");
       registry.unregister("delegate_to_skill");
-      registry.unregister("invoke_agent");
-      registry.unregister("invoke_planner");
-      registry.unregister("invoke_researcher");
-      registry.unregister("invoke_writer");
-      registry.unregister("invoke_reviewer");
+      for (const name of DELEGATION_TOOL_NAMES) registry.unregister(name);
     };
-  }, [registry, workspaceCtx, setPendingPlanConfirmation]);
+  }, [registry, factory, workspaceCtx, skillsCtx, setPendingPlanConfirmation]);
 
   const value = useMemo<MCPContextValue>(
     () => ({ registry, activityLog, factory }),

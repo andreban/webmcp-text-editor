@@ -11,7 +11,7 @@ export class ListSkillsTool implements Tool<Record<string, never>, string> {
     return {
       name: "list_skills",
       description:
-        "Lists all skills available in this workspace. Returns an array of { id, name, description } entries. Use read_skill to fetch the full instructions for a skill, or delegate_to_skill to run one.",
+        "Lists the user's saved skills (reusable instructions such as Proofreader or Summarizer) by id, name, and description. Use to find a skill that fits the user's request before reading or running it.",
       parameters: {
         type: "object",
         properties: {},

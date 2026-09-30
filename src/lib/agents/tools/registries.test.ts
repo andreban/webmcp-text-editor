@@ -6,7 +6,6 @@ import { createToolRegistry } from "./registries";
 import type { EditorContext } from "./editor/context";
 import type { WorkspaceContext } from "./workspace/context";
 import type { SkillsContext } from "./skills/context";
-import type { AgentRunnerFactory } from "..";
 
 const skillsCtx: SkillsContext = { skillsRef: { current: [] } };
 
@@ -18,7 +17,6 @@ function makeContexts() {
     getModel: vi.fn().mockReturnValue(null),
     getSelection: vi.fn().mockReturnValue(null),
   };
-  const mockFactory: AgentRunnerFactory = { create: vi.fn() };
 
   const editorCtx: EditorContext = {
     editorRef: { current: mockEditor },
@@ -31,7 +29,6 @@ function makeContexts() {
   const workspaceCtx: WorkspaceContext = {
     docsRef: { current: [] },
     activeDocRef: { current: null },
-    factory: mockFactory,
     createDocumentFn: vi.fn().mockReturnValue(""),
     renameDocumentFn: vi.fn(),
     deleteDocumentFn: vi.fn(),
@@ -50,25 +47,29 @@ describe("createToolRegistry", () => {
     const { editorCtx, workspaceCtx } = makeContexts();
     const registry = createToolRegistry(editorCtx, workspaceCtx, skillsCtx);
     const names = registry.getTools().map((d) => d.name);
-    expect(names).toContain("read");
+    expect(names).toContain("read_document");
     expect(names).toContain("read_selection");
-    expect(names).toContain("search");
-    expect(names).toContain("get_metadata");
-    expect(names).toContain("get_current_mode");
-    expect(names).toContain("get_active_doc_info");
+    expect(names).toContain("search_document");
+    expect(names).toContain("get_editor_state");
     expect(names).toContain("list_workspace_docs");
-    expect(names).toContain("read_workspace_doc");
-    expect(names).toContain("query_workspace_doc");
-    expect(names).toContain("query_workspace");
   });
 
-  it("includes edit, write, request_switch_to_editor", () => {
+  it("includes edit_document, rewrite_document, request_switch_to_editor", () => {
     const { editorCtx, workspaceCtx } = makeContexts();
     const registry = createToolRegistry(editorCtx, workspaceCtx, skillsCtx);
     const names = registry.getTools().map((d) => d.name);
-    expect(names).toContain("edit");
-    expect(names).toContain("write");
+    expect(names).toContain("edit_document");
+    expect(names).toContain("rewrite_document");
     expect(names).toContain("request_switch_to_editor");
+  });
+
+  it("leaves out model-backed tools, which need an API key", () => {
+    const { editorCtx, workspaceCtx } = makeContexts();
+    const registry = createToolRegistry(editorCtx, workspaceCtx, skillsCtx);
+    const names = registry.getTools().map((d) => d.name);
+    expect(names).not.toContain("query_workspace_doc");
+    expect(names).not.toContain("delegate_to_skill");
+    expect(names.filter((n) => n.startsWith("invoke_"))).toEqual([]);
   });
 
   it("includes workspace write tools", () => {

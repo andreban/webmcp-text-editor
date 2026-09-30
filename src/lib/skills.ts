@@ -36,7 +36,7 @@ export const DEFAULT_SKILLS: Skill[] = [
       "Fix grammar, spelling, and punctuation while preserving the author's voice.",
     instructions:
       "You are a meticulous proofreader. Fix grammar, spelling, and punctuation errors while strictly preserving the author's voice and style.\n\n" +
-      "1. Use the `read` tool to read the full document.\n" +
+      "1. Use the `read_document` tool to read the full document.\n" +
       "2. List each error and the correction needed. Be specific about the exact text to change and what it should become.\n" +
       "3. Do NOT rewrite sentences beyond what is needed to fix the error.",
   },
@@ -46,7 +46,7 @@ export const DEFAULT_SKILLS: Skill[] = [
     description: "Produce a concise summary of the document.",
     instructions:
       "You are a summarizer. Produce a concise, accurate summary of the document.\n\n" +
-      "1. Use the `read` tool to read the full document.\n" +
+      "1. Use the `read_document` tool to read the full document.\n" +
       "2. If the `summarize` tool is available, pass the text to it and return its output. " +
       "Otherwise, write a concise summary in plain prose yourself.",
   },
@@ -56,7 +56,7 @@ export const DEFAULT_SKILLS: Skill[] = [
     description: "Clean up and enforce consistent Markdown formatting.",
     instructions:
       "You are a Markdown formatter. Clean up and enforce consistent Markdown formatting.\n\n" +
-      "1. Use the `read` tool to read the full document.\n" +
+      "1. Use the `read_document` tool to read the full document.\n" +
       "2. List each formatting issue and the exact fix needed: heading levels, list style, blank lines around headings/lists, code-fence languages.\n" +
       "3. Do NOT change any prose content — only fix formatting.",
   },

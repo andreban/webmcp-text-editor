@@ -9,6 +9,11 @@ import type {
   ToolRegistry,
 } from "@mast-ai/core";
 import type { ToolActivityLog } from "./toolActivityLog";
+import {
+  toolAnnotations,
+  type ToolAnnotations,
+} from "./agents/tools/annotations";
+import { toolError, toolErrorMessage } from "./agents/tools/errors";
 
 function describeEvent(event: AgentEvent): string {
   switch (event.type) {
@@ -41,6 +46,7 @@ interface WebMCPTool {
   name: string;
   description: string;
   inputSchema: object;
+  annotations?: ToolAnnotations;
   execute: (
     args: Record<string, unknown>,
     client?: WebMCPClient,
@@ -72,6 +78,7 @@ export function registerWebMCPTools(
   const mc = document.modelContext;
   const controllers = new Map<string, AbortController>();
   let teardown = false;
+  let anyRegistered = false;
 
   const registerOne = (def: ToolDefinition): boolean => {
     if (teardown) return true;
@@ -85,6 +92,7 @@ export function registerWebMCPTools(
           name: def.name,
           description: def.description,
           inputSchema: def.parameters,
+          annotations: toolAnnotations(def),
           execute: async (args, client) => {
             const callId = log?.startCall(def.name, args);
             const ctx: ToolContext = {
@@ -101,22 +109,36 @@ export function registerWebMCPTools(
             };
             try {
               const result = (await tool.call(args as never, ctx)) as string;
-              if (callId) log?.finishCall(callId, { ok: true, result });
+              const error = toolErrorMessage(result);
+              if (callId) {
+                log?.finishCall(
+                  callId,
+                  error === null ? { ok: true, result } : { ok: false, error },
+                );
+              }
               return result;
             } catch (err) {
               const message = err instanceof Error ? err.message : String(err);
               if (callId)
                 log?.finishCall(callId, { ok: false, error: message });
-              throw err;
+              // A rejection reaches the agent as a bare UnknownError, so the
+              // failure is resolved as a structured payload instead.
+              return toolError(message, "TOOL_FAILED");
             }
           },
         },
         { signal: ac.signal },
       );
       controllers.set(def.name, ac);
+      anyRegistered = true;
       return true;
     } catch (err) {
       console.warn("WebMCP tool registration failed:", err);
+      if (anyRegistered) {
+        // One bad tool (e.g. a name clash) should not remove the others.
+        return true;
+      }
+      // The very first registration failing means an incompatible API.
       cleanup();
       return false;
     }

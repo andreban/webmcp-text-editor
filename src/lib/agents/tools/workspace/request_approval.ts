@@ -4,6 +4,11 @@
 import { v4 as uuidv4 } from "uuid";
 import type { ApprovalRequest } from "../../../store";
 
+export interface ApprovalOptions {
+  /** Prompt even when "Approve All" is on. Used for irreversible actions. */
+  alwaysAsk?: boolean;
+}
+
 export function requestApproval(
   toolName: string,
   description: string,
@@ -11,8 +16,9 @@ export function requestApproval(
     fn: (prev: ApprovalRequest[]) => ApprovalRequest[],
   ) => void,
   approveAllRef: { current: boolean },
+  { alwaysAsk = false }: ApprovalOptions = {},
 ): Promise<boolean> {
-  if (approveAllRef.current) return Promise.resolve(true);
+  if (approveAllRef.current && !alwaysAsk) return Promise.resolve(true);
   return new Promise((resolve) => {
     const id = uuidv4();
     const request: ApprovalRequest = {

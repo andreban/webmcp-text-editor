@@ -17,11 +17,7 @@ export class InvokeReviewerTool implements Tool<InvokeReviewerArgs, string> {
     return {
       name: "invoke_reviewer",
       description:
-        "Evaluates a draft against explicit criteria and returns structured feedback. " +
-        "Returns JSON: { passed: boolean, issues: [{ severity, location?, description, fix? }], summary }. " +
-        "Use after invoke_writer to check a draft before applying it. " +
-        "If passed is false and error-severity issues remain after 3 Writer→Reviewer cycles, " +
-        "present the best available draft via edit() or write() and summarise remaining issues in your response.",
+        "Checks a draft against criteria and reports whether it passes, with each issue's severity and a suggested fix. Use after invoke_writer before applying a draft; after three failed revisions, apply the best draft and tell the user what remains.",
       parameters: {
         type: "object",
         properties: {
@@ -33,7 +29,7 @@ export class InvokeReviewerTool implements Tool<InvokeReviewerArgs, string> {
             type: "array",
             items: { type: "string" },
             description:
-              "Review criteria to check against (e.g. 'grammatical correctness', 'consistent use of past tense', 'no unsupported factual claims').",
+              "Criteria to check, e.g. 'grammatical correctness', 'consistent past tense', 'no unsupported claims'.",
           },
         },
         required: ["text", "criteria"],

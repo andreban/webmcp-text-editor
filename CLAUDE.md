@@ -24,14 +24,15 @@ npm run preview   # Preview production build
 **Data flow:**
 
 1. `MCPProvider` constructs `EditorContext`, `WorkspaceContext`, and `SkillsContext` from React state/refs in `src/lib/store.tsx` and `src/lib/WorkspacesContext.tsx`.
-2. `createToolRegistry` (`src/lib/agents/tools/registries.ts`) registers every tool (editor, workspace, skills) on a `ToolRegistry`. Delegation tools (`invoke_*`, `delegate_to_skill`) and built-in AI tools register asynchronously when an API key is available.
-3. `registerWebMCPTools` mirrors the registry into `document.modelContext`. Each external call is recorded in a `ToolActivityLog` (`src/lib/toolActivityLog.ts`) and its sub-agent events (`text_delta`, `thinking`, `tool_call_*`) are forwarded as chatter.
-4. Mutating tools self-gate inside their `call()` methods:
-   - `edit` / `write` → `applySuggestion` queues a `Suggestion` and waits for inline Accept/Reject via Monaco view zones (`src/components/InlineSuggestions.tsx`).
-   - `create_document` / `rename_document` / `delete_document` → `requestApproval` queues an `ApprovalRequest` resolved by the modal in `src/components/ApprovalModal.tsx`.
+2. `createToolRegistry` (`src/lib/agents/tools/registries.ts`) registers the tools that need no API key (editor, workspace, skills) on a `ToolRegistry`. Model-backed tools (`query_workspace_doc`, `invoke_*`, `delegate_to_skill`) are registered by `MCPProvider` only while a Gemini API key is set; built-in AI tools register asynchronously when the browser supports them.
+3. `registerWebMCPTools` mirrors the registry into `document.modelContext`, attaching annotations from `src/lib/agents/tools/annotations.ts`. Each external call is recorded in a `ToolActivityLog` (`src/lib/toolActivityLog.ts`) and its sub-agent events (`text_delta`, `thinking`, `tool_call_*`) are forwarded as chatter.
+4. Tools never reject: failures resolve a `{ error, code, retryable, suggestion? }` payload built with `toolError` (`src/lib/agents/tools/errors.ts`), because WebMCP turns a rejection into a bare `UnknownError`. The bridge converts any unexpected throw the same way.
+5. Mutating tools self-gate inside their `call()` methods:
+   - `edit_document` / `rewrite_document` → `applySuggestion` queues a `Suggestion` and waits for inline Accept/Reject via Monaco view zones (`src/components/InlineSuggestions.tsx`). Edits are refused with `STALE_EDIT` if the target text changed while pending.
+   - `create_document` / `rename_document` / `delete_document` / `invoke_agent` → `requestApproval` queues an `ApprovalRequest` resolved by the modal in `src/components/ApprovalModal.tsx`.
    - `invoke_planner` → queues a `PlanConfirmationRequest` resolved by the same modal.
-   - The "Approve All" toggle in the header bar short-circuits every prompt.
-5. `ToolLogPane` (`src/components/ToolLogPane.tsx`) subscribes to `ToolActivityLog` and renders calls in a bottom pane with expandable args / result / chatter.
+   - The "Approve All" toggle in the header bar short-circuits every prompt except `delete_document`, which always asks.
+6. `ToolLogPane` (`src/components/ToolLogPane.tsx`) subscribes to `ToolActivityLog` and renders calls in a bottom pane with expandable args / result / chatter.
 
 **Key modules:**
 
@@ -41,7 +42,9 @@ npm run preview   # Preview production build
 - `src/lib/agents/tools/registries.ts` — builds the `ToolRegistry` from editor / workspace / skills contexts.
 - `src/lib/agents/tools/skills/` — `list_skills` and `read_skill` tools (read-only skill discovery for the external agent).
 - `src/lib/agents/tools/workspace/request_approval.ts` — promise-based helper that queues an `ApprovalRequest` and waits for the modal to resolve it.
-- `src/lib/agents/tools/editor/apply_suggestion.ts` — analogous helper for inline `edit`/`write` suggestions.
+- `src/lib/agents/tools/editor/apply_suggestion.ts` — analogous helper for inline `edit_document`/`rewrite_document` suggestions.
+- `src/lib/agents/tools/workspace/resolve_document.ts` — resolves a document by id or case-insensitive title, and reads the open document's live editor text.
+- `src/lib/agents/tools/paginate.ts` — shared `offset`/`limit` paging for tools that return document text.
 - `src/components/InlineSuggestions.tsx` — manages Monaco view zones via React portals so `SuggestionCard` renders inline at the change location.
 - `src/components/ApprovalModal.tsx` — single modal that renders the next pending workspace-mutation approval or pending plan confirmation.
 - `src/components/ToolLogPane.tsx` — bottom pane that subscribes to `ToolActivityLog`.

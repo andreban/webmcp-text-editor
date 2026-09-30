@@ -10,6 +10,7 @@ import type {
 import type { AgentRunnerFactory } from "../../";
 import { createPlannerAgent, Plan, PLANNER_SYSTEM_PROMPT } from "../../";
 import type { PlanConfirmationRequest } from "../../../store";
+import { toolError } from "../errors";
 
 interface InvokePlannerArgs {
   task: string;
@@ -28,18 +29,18 @@ export class InvokePlannerTool implements Tool<InvokePlannerArgs, string> {
     return {
       name: "invoke_planner",
       description:
-        "Decomposes a high-level task into a structured step-by-step Plan. Returns a JSON string: { goal, steps: [{ id, instruction, dependsOn }] }. The Orchestrator reads the plan and dispatches each step using the appropriate tools.",
+        "Breaks a multi-step or whole-document task into ordered steps and shows the plan to the user for approval. Use before large changes such as revising every section; then carry out each approved step yourself.",
       parameters: {
         type: "object",
         properties: {
           task: {
             type: "string",
-            description: "The high-level task to decompose into a plan.",
+            description: "The overall goal, in the user's terms.",
           },
           context: {
             type: "string",
             description:
-              "Optional additional context (e.g. current document summary, workspace doc list).",
+              "Background that shapes the plan, such as the document outline or related document titles.",
           },
         },
         required: ["task"],
@@ -66,13 +67,17 @@ export class InvokePlannerTool implements Tool<InvokePlannerArgs, string> {
       try {
         plan = JSON.parse(event.output) as Plan;
       } catch {
-        throw new Error(
-          `invoke_planner: agent returned invalid JSON: ${event.output}`,
+        return toolError(
+          "The planner returned an invalid plan (not JSON).",
+          "TOOL_FAILED",
+          { retryable: true },
         );
       }
       if (typeof plan.goal !== "string" || !Array.isArray(plan.steps)) {
-        throw new Error(
-          "invoke_planner: plan is missing required fields (goal, steps)",
+        return toolError(
+          "The planner returned a plan without a goal or steps.",
+          "TOOL_FAILED",
+          { retryable: true },
         );
       }
 
@@ -82,7 +87,9 @@ export class InvokePlannerTool implements Tool<InvokePlannerArgs, string> {
       this.setPendingPlanConfirmation(null);
 
       if (!accepted) {
-        throw new Error("Plan rejected by user.");
+        return toolError("Plan rejected by user.", "REJECTED", {
+          suggestion: "Ask the user how they would like to proceed.",
+        });
       }
       return JSON.stringify(plan);
     }

@@ -4,25 +4,26 @@
 import type { Tool, ToolContext, ToolDefinition } from "@mast-ai/core";
 import type { EditorContext } from "./context";
 import { applySuggestion } from "./apply_suggestion";
+import { toolError } from "../errors";
 
-interface WriteArgs {
+interface RewriteArgs {
   content: string;
 }
 
-export class WriteTool implements Tool<WriteArgs, string> {
+export class RewriteDocumentTool implements Tool<RewriteArgs, string> {
   constructor(private ctx: EditorContext) {}
 
   definition(): ToolDefinition {
     return {
-      name: "write",
+      name: "rewrite_document",
       description:
-        "Proposes a complete rewrite. This tool pauses and waits for user approval. ONLY use this when the user explicitly requests a total rewrite of the entire document.",
+        "Proposes replacing the entire open document and waits for the user to accept or reject it. Use only when the user explicitly asks for a full rewrite; for anything smaller, use edit_document.",
       parameters: {
         type: "object",
         properties: {
           content: {
             type: "string",
-            description: "The full new document content.",
+            description: "The complete new document text.",
           },
         },
         required: ["content"],
@@ -32,19 +33,29 @@ export class WriteTool implements Tool<WriteArgs, string> {
     };
   }
 
-  async call(args: WriteArgs, _ctx: ToolContext): Promise<string> {
+  async call(args: RewriteArgs, _ctx: ToolContext): Promise<string> {
     const editor = this.ctx.editorRef.current;
-    if (!editor) return "Error: Editor not initialized.";
+    if (!editor) {
+      return toolError("The editor is still loading.", "NOT_READY", {
+        retryable: true,
+      });
+    }
 
+    const originalText = editor.getValue();
     return applySuggestion(
       {
-        originalText: editor.getValue(),
+        originalText,
         replacementText: args.content,
         contextBefore: "",
         contextAfter: "",
         startLine: 1,
       },
-      () => editor.setValue(args.content),
+      () => {
+        // Refuse to overwrite anything the user typed while this was pending.
+        if (editor.getValue() !== originalText) return false;
+        editor.setValue(args.content);
+        return true;
+      },
       "Document updated automatically (Approve All is ON).",
       this.ctx.setSuggestions,
       this.ctx.approveAllRef,

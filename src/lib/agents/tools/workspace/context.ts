@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { WorkspaceDocument } from "../../../workspace";
-import type { AgentRunnerFactory } from "../../";
 import type { ApprovalRequest } from "../../../store";
 
 export interface EditorLike {
@@ -13,7 +12,6 @@ export interface EditorLike {
 export interface WorkspaceContext {
   docsRef: { current: WorkspaceDocument[] };
   activeDocRef: { current: { id: string; title: string } | null };
-  factory: AgentRunnerFactory;
   createDocumentFn: (title: string) => string;
   renameDocumentFn: (id: string, title: string) => void;
   deleteDocumentFn: (id: string) => void;
