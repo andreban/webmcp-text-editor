@@ -4,11 +4,12 @@
 import type { Tool, ToolContext, ToolDefinition } from "@mast-ai/core";
 import type { AgentRunnerFactory } from "../../";
 import { runResearch } from "../../";
-import type { WorkspaceDocument } from "../../../workspace";
+import type { WorkspaceContext } from "../workspace/context";
+import { documentText, resolveDocument } from "../workspace/resolve_document";
 
 interface InvokeResearcherArgs {
   query: string;
-  docIds?: string[];
+  documents?: string[];
 }
 
 export class InvokeResearcherTool implements Tool<
@@ -17,26 +18,29 @@ export class InvokeResearcherTool implements Tool<
 > {
   constructor(
     private factory: AgentRunnerFactory,
-    private docsRef: { current: WorkspaceDocument[] },
+    private workspace: Pick<
+      WorkspaceContext,
+      "docsRef" | "activeDocRef" | "editorRef" | "editorContentRef"
+    >,
   ) {}
 
   definition(): ToolDefinition {
     return {
       name: "invoke_researcher",
       description:
-        "Queries workspace documents and synthesizes a structured answer. Returns JSON: { summary, sources: [{ id, title, excerpt }] }. Use this when the task requires finding information across workspace documents before writing or reviewing.",
+        "Answers a question from the workspace's documents and cites the passages it used. Use when information may be spread across several documents, or before drafting text that should draw on them.",
       parameters: {
         type: "object",
         properties: {
           query: {
             type: "string",
-            description: "The question or information need to research.",
+            description: "The question to answer.",
           },
-          docIds: {
+          documents: {
             type: "array",
             items: { type: "string" },
             description:
-              "Optional list of document IDs to restrict the search to. If omitted, all workspace documents are queried.",
+              "Ids or exact titles of documents to limit the search to. Omit to search every document.",
           },
         },
         required: ["query"],
@@ -49,11 +53,26 @@ export class InvokeResearcherTool implements Tool<
     args: InvokeResearcherArgs,
     context: ToolContext,
   ): Promise<string> {
+    const allDocs = this.workspace.docsRef.current;
+    let docIds: string[] | undefined;
+    if (args.documents?.length) {
+      docIds = [];
+      for (const ref of args.documents) {
+        const { doc, error } = resolveDocument(allDocs, ref);
+        if (error !== undefined) return error;
+        docIds.push(doc.id);
+      }
+    }
+    // Research the editor's live text for the open document, not its last save.
+    const docs = allDocs.map((d) => ({
+      ...d,
+      content: documentText(this.workspace, d),
+    }));
     const result = await runResearch(
       args.query,
-      this.docsRef.current,
+      docs,
       this.factory,
-      args.docIds,
+      docIds,
       context,
     );
     return JSON.stringify(result);

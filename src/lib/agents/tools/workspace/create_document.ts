@@ -4,6 +4,7 @@
 import type { Tool, ToolContext, ToolDefinition } from "@mast-ai/core";
 import type { WorkspaceContext } from "./context";
 import { requestApproval } from "./request_approval";
+import { toolError } from "../errors";
 
 interface CreateDocumentArgs {
   title: string;
@@ -17,18 +18,17 @@ export class CreateDocumentTool implements Tool<CreateDocumentArgs, string> {
     return {
       name: "create_document",
       description:
-        "Creates a new document in the workspace with the given title and optional initial content. Providing content avoids a separate write step. Pauses for user authorization before creating.",
+        "Creates a new document, after the user approves, and opens it in the editor. Use when the user wants a new file, draft, or copy; include the initial text to avoid a separate rewrite step.",
       parameters: {
         type: "object",
         properties: {
           title: {
             type: "string",
-            description: "The title for the new document.",
+            description: "Title for the new document.",
           },
           content: {
             type: "string",
-            description:
-              "Optional initial content for the new document. If omitted the document is created blank.",
+            description: "Initial text. Omit for a blank document.",
           },
         },
         required: ["title"],
@@ -40,7 +40,7 @@ export class CreateDocumentTool implements Tool<CreateDocumentArgs, string> {
 
   async call(args: CreateDocumentArgs, _ctx: ToolContext): Promise<string> {
     if (!args.title?.trim()) {
-      return JSON.stringify({ error: "title is required" });
+      return toolError("title must not be empty.", "INVALID_INPUT");
     }
     const approved = await requestApproval(
       "create_document",
@@ -48,7 +48,9 @@ export class CreateDocumentTool implements Tool<CreateDocumentArgs, string> {
       this.ctx.setPendingApprovals,
       this.ctx.approveAllRef,
     );
-    if (!approved) return JSON.stringify({ error: "Rejected by user" });
+    if (!approved) {
+      return toolError("User rejected creating the document.", "REJECTED");
+    }
     const currentDoc = this.ctx.activeDocRef.current;
     if (currentDoc) {
       const content =
@@ -62,6 +64,11 @@ export class CreateDocumentTool implements Tool<CreateDocumentArgs, string> {
     if (args.content && newId) {
       this.ctx.saveDocContentFn(newId, args.content);
     }
-    return `Document "${args.title}" created.`;
+    return JSON.stringify({
+      created: true,
+      id: newId,
+      title: args.title,
+      active: true,
+    });
   }
 }

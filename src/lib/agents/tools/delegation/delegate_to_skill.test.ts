@@ -8,10 +8,15 @@ import type { WorkspaceContext } from "../workspace/context";
 import type { SkillsContext } from "../skills/context";
 import { createToolRegistry } from "../registries";
 
-const skillsCtx: SkillsContext = { skillsRef: { current: [] } };
-import { saveSkills } from "../../../skills";
+import type { Skill } from "../../../skills";
 import type { AgentRunnerFactory } from "../../";
 import type { AgentEvent, ToolContext } from "@mast-ai/core";
+
+const skillsCtx: SkillsContext = { skillsRef: { current: [] } };
+
+function setSkills(skills: Skill[]) {
+  skillsCtx.skillsRef.current = skills;
+}
 
 describe("DelegateToSkillTool", () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -33,7 +38,7 @@ describe("DelegateToSkillTool", () => {
   }
 
   beforeEach(() => {
-    localStorage.clear();
+    skillsCtx.skillsRef.current = [];
     mockEditor = {
       getValue: vi.fn().mockReturnValue("Initial content"),
       setValue: vi.fn(),
@@ -75,7 +80,7 @@ describe("DelegateToSkillTool", () => {
     workspaceCtx = {
       docsRef: { current: [] },
       activeDocRef: { current: null },
-      factory: mockFactory,
+
       createDocumentFn: vi.fn().mockReturnValue(""),
       renameDocumentFn: vi.fn(),
       deleteDocumentFn: vi.fn(),
@@ -92,34 +97,46 @@ describe("DelegateToSkillTool", () => {
     return new DelegateToSkillTool(
       factory,
       createToolRegistry(editorCtx, workspaceCtx, skillsCtx).readOnly(),
+      skillsCtx,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       () => ({ runBuilder: mockRunBuilder }) as any,
     );
   }
 
-  it("returns error string when skill name is not found", async () => {
-    saveSkills([
+  it("returns NOT_FOUND listing available skills when the name is unknown", async () => {
+    setSkills([
       { id: "1", name: "Other", description: "d", instructions: "i" },
     ]);
-    const result = await makeTool().call(
-      { skillName: "Missing", task: "do it" },
-      {},
+    const result = JSON.parse(
+      await makeTool().call({ skillName: "Missing", task: "do it" }, {}),
     );
-    expect(result).toContain('skill "Missing" not found');
-    expect(result).toContain("Other");
+    expect(result.code).toBe("NOT_FOUND");
+    expect(result.error).toContain('"Missing"');
+    expect(result.suggestion).toContain("Other");
   });
 
-  it("returns error listing 'none' when no skills exist", async () => {
+  it("returns an error listing 'none' when no skills exist", async () => {
+    const result = JSON.parse(
+      await makeTool().call({ skillName: "Any", task: "do it" }, {}),
+    );
+    expect(result.suggestion).toContain("none");
+  });
+
+  it("matches the skill name case-insensitively", async () => {
+    mockRunStream.mockReturnValue(makeMockStream("ok"));
+    setSkills([
+      { id: "1", name: "Proofreader", description: "d", instructions: "i" },
+    ]);
     const result = await makeTool().call(
-      { skillName: "Any", task: "do it" },
+      { skillName: "proofreader", task: "t" },
       {},
     );
-    expect(result).toContain("none");
+    expect(result).toBe("ok");
   });
 
   it("calls runBuilder with skill instructions and returns raw output", async () => {
     mockRunStream.mockReturnValue(makeMockStream("Proofreading complete."));
-    saveSkills([
+    setSkills([
       {
         id: "1",
         name: "Proofreader",
@@ -138,7 +155,7 @@ describe("DelegateToSkillTool", () => {
   });
 
   it("does not include delegate_to_skill in child agent tool list", async () => {
-    saveSkills([
+    setSkills([
       { id: "1", name: "Proofreader", description: "d", instructions: "i" },
     ]);
     await makeTool().call({ skillName: "Proofreader", task: "t" }, {});
@@ -147,7 +164,7 @@ describe("DelegateToSkillTool", () => {
   });
 
   it("does not call factory.create when a custom runnerFactory override is used", async () => {
-    saveSkills([
+    setSkills([
       { id: "1", name: "Proofreader", description: "d", instructions: "i" },
     ]);
     await makeTool().call({ skillName: "Proofreader", task: "t" }, {});
@@ -161,7 +178,7 @@ describe("DelegateToSkillTool", () => {
         { type: "thinking", delta: "hmm" },
       ]),
     );
-    saveSkills([
+    setSkills([
       { id: "1", name: "Proofreader", description: "d", instructions: "i" },
     ]);
     const onEvent = vi.fn();
@@ -177,7 +194,7 @@ describe("DelegateToSkillTool", () => {
   });
 
   it("gives skill read-only workspace tools (no create_document, switch_active_document)", async () => {
-    saveSkills([
+    setSkills([
       { id: "1", name: "Research Skill", description: "d", instructions: "i" },
     ]);
     await makeTool().call(
@@ -186,13 +203,13 @@ describe("DelegateToSkillTool", () => {
     );
     const [agentConfig] = mockRunBuilder.mock.calls[0];
     expect(agentConfig.tools).toContain("list_workspace_docs");
-    expect(agentConfig.tools).toContain("read_workspace_doc");
+    expect(agentConfig.tools).toContain("read_document");
     expect(agentConfig.tools).not.toContain("create_document");
     expect(agentConfig.tools).not.toContain("switch_active_document");
   });
 
   it("passes model to runnerFactory when skill specifies a model", async () => {
-    saveSkills([
+    setSkills([
       {
         id: "1",
         name: "Proofreader",
@@ -207,6 +224,7 @@ describe("DelegateToSkillTool", () => {
     const tool = new DelegateToSkillTool(
       mockFactory,
       createToolRegistry(editorCtx, workspaceCtx, skillsCtx).readOnly(),
+      skillsCtx,
       customRunnerFactory,
     );
     await tool.call({ skillName: "Proofreader", task: "t" }, {});
@@ -217,12 +235,12 @@ describe("DelegateToSkillTool", () => {
   });
 
   it("gives skill a read-only registry (no edit, no write tool registered)", async () => {
-    saveSkills([
+    setSkills([
       { id: "1", name: "Proofreader", description: "d", instructions: "i" },
     ]);
     await makeTool().call({ skillName: "Proofreader", task: "t" }, {});
     const [agentConfig] = mockRunBuilder.mock.calls[0];
-    expect(agentConfig.tools).not.toContain("edit");
-    expect(agentConfig.tools).not.toContain("write");
+    expect(agentConfig.tools).not.toContain("edit_document");
+    expect(agentConfig.tools).not.toContain("rewrite_document");
   });
 });

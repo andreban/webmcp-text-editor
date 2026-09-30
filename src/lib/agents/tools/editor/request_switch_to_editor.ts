@@ -3,6 +3,7 @@
 
 import type { Tool, ToolContext, ToolDefinition } from "@mast-ai/core";
 import type { EditorContext } from "./context";
+import { toolError } from "../errors";
 
 export class RequestSwitchToEditorTool implements Tool<
   Record<string, never>,
@@ -14,7 +15,7 @@ export class RequestSwitchToEditorTool implements Tool<
     return {
       name: "request_switch_to_editor",
       description:
-        "Requests the user to switch from Preview mode to Editor mode. This will display a prompt to the user and pause until they accept or decline. Call this before attempting edits when in preview mode.",
+        "Asks the user to leave the read-only preview and show the editor, waiting for their answer. Use before editing when get_editor_state reports preview mode.",
       parameters: { type: "object", properties: {} },
       scope: "write",
     };
@@ -28,6 +29,8 @@ export class RequestSwitchToEditorTool implements Tool<
     if (accepted) {
       return "Switched to editor mode.";
     }
-    return "User declined to switch to editor mode.";
+    return toolError("User declined to switch to editor mode.", "REJECTED", {
+      suggestion: "Ask the user whether they still want the change made.",
+    });
   }
 }

@@ -4,10 +4,12 @@
 import type { Tool, ToolContext, ToolDefinition } from "@mast-ai/core";
 import type { WorkspaceContext } from "./context";
 import { requestApproval } from "./request_approval";
+import { toolError } from "../errors";
+import { DOCUMENT_REF_DESCRIPTION, resolveDocument } from "./resolve_document";
 
 interface RenameDocumentArgs {
-  id: string;
-  title: string;
+  document: string;
+  newTitle: string;
 }
 
 export class RenameDocumentTool implements Tool<RenameDocumentArgs, string> {
@@ -17,20 +19,20 @@ export class RenameDocumentTool implements Tool<RenameDocumentArgs, string> {
     return {
       name: "rename_document",
       description:
-        "Renames an existing document in the workspace. Pauses for user authorization before renaming.",
+        "Changes a document's title after the user approves. Use when the user asks to rename or retitle a document.",
       parameters: {
         type: "object",
         properties: {
-          id: {
+          document: {
             type: "string",
-            description: "The document ID to rename.",
+            description: DOCUMENT_REF_DESCRIPTION,
           },
-          title: {
+          newTitle: {
             type: "string",
-            description: "The new title for the document.",
+            description: "The title to give the document.",
           },
         },
-        required: ["id", "title"],
+        required: ["document", "newTitle"],
       },
       scope: "write",
       requiresApproval: true,
@@ -38,18 +40,24 @@ export class RenameDocumentTool implements Tool<RenameDocumentArgs, string> {
   }
 
   async call(args: RenameDocumentArgs, _ctx: ToolContext): Promise<string> {
-    const doc = this.ctx.docsRef.current.find((d) => d.id === args.id);
-    if (!doc) return JSON.stringify({ error: "Document not found" });
-    if (!args.title?.trim())
-      return JSON.stringify({ error: "title is required" });
+    const { doc, error } = resolveDocument(
+      this.ctx.docsRef.current,
+      args.document,
+    );
+    if (error !== undefined) return error;
+    if (!args.newTitle?.trim()) {
+      return toolError("newTitle must not be empty.", "INVALID_INPUT");
+    }
     const approved = await requestApproval(
       "rename_document",
-      `Rename document "${doc.title}" to "${args.title}"`,
+      `Rename document "${doc.title}" to "${args.newTitle}"`,
       this.ctx.setPendingApprovals,
       this.ctx.approveAllRef,
     );
-    if (!approved) return JSON.stringify({ error: "Rejected by user" });
-    this.ctx.renameDocumentFn(args.id, args.title);
-    return `Document renamed to "${args.title}".`;
+    if (!approved) {
+      return toolError("User rejected renaming the document.", "REJECTED");
+    }
+    this.ctx.renameDocumentFn(doc.id, args.newTitle);
+    return JSON.stringify({ renamed: true, id: doc.id, title: args.newTitle });
   }
 }

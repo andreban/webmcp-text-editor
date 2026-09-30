@@ -62,7 +62,7 @@ describe("ReadSkillTool", () => {
   it("returns error when neither id nor name is provided", async () => {
     const tool = new ReadSkillTool(makeCtx(sample));
     const out = JSON.parse(await tool.call({}, {}));
-    expect(out.error).toMatch(/required/i);
+    expect(out.code).toBe("INVALID_INPUT");
   });
 
   it("returns error for missing skill", async () => {

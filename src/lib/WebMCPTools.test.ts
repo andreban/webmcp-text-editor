@@ -3,6 +3,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { registerWebMCPTools } from "./WebMCPTools";
+import { ToolActivityLog } from "./toolActivityLog";
 import { createToolRegistry } from "./agents/tools/registries";
 import type { EditorContext } from "./agents/tools/editor/context";
 import type { WorkspaceContext } from "./agents/tools/workspace/context";
@@ -41,7 +42,6 @@ function makeWorkspaceCtx(): WorkspaceContext {
   return {
     docsRef: { current: [] },
     activeDocRef: { current: null },
-    factory: { create: vi.fn() },
     createDocumentFn: vi.fn().mockReturnValue(""),
     renameDocumentFn: vi.fn(),
     deleteDocumentFn: vi.fn(),
@@ -54,37 +54,38 @@ function makeWorkspaceCtx(): WorkspaceContext {
   };
 }
 
+interface CapturedTool {
+  name: string;
+  annotations?: Record<string, boolean>;
+  execute: (
+    args: Record<string, unknown>,
+    client?: { reportProgress?: (msg: string) => void },
+  ) => unknown;
+}
+
+function makeReadTool(name: string, call: () => Promise<string>) {
+  return {
+    definition: () => ({
+      name,
+      description: "test tool",
+      parameters: { type: "object", properties: {} },
+      scope: "read" as const,
+    }),
+    call: vi.fn().mockImplementation(call),
+  };
+}
+
 describe("registerWebMCPTools", () => {
-  const registeredTools: Map<
-    string,
-    {
-      execute: (
-        args: Record<string, unknown>,
-        client?: { reportProgress?: (msg: string) => void },
-      ) => unknown;
-      signal?: AbortSignal;
-    }
-  > = new Map();
+  const registeredTools: Map<string, CapturedTool & { signal?: AbortSignal }> =
+    new Map();
 
   beforeEach(() => {
     registeredTools.clear();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (document as any).modelContext = {
       registerTool: vi.fn(
-        (
-          tool: {
-            name: string;
-            execute: (
-              args: Record<string, unknown>,
-              client?: { reportProgress?: (msg: string) => void },
-            ) => unknown;
-          },
-          options?: { signal?: AbortSignal },
-        ) => {
-          registeredTools.set(tool.name, {
-            execute: tool.execute,
-            signal: options?.signal,
-          });
+        (tool: CapturedTool, options?: { signal?: AbortSignal }) => {
+          registeredTools.set(tool.name, { ...tool, signal: options?.signal });
         },
       ),
     };
@@ -147,19 +148,14 @@ describe("registerWebMCPTools", () => {
     const expected = [
       "list_skills",
       "read_skill",
-      "read",
+      "get_editor_state",
       "read_selection",
-      "search",
-      "get_metadata",
-      "get_current_mode",
+      "search_document",
       "request_switch_to_editor",
-      "edit",
-      "write",
-      "get_active_doc_info",
+      "edit_document",
+      "rewrite_document",
       "list_workspace_docs",
-      "read_workspace_doc",
-      "query_workspace_doc",
-      "query_workspace",
+      "read_document",
       "create_document",
       "rename_document",
       "delete_document",
@@ -220,29 +216,104 @@ describe("registerWebMCPTools", () => {
       skillsCtx,
     );
     registerWebMCPTools(registry);
-    const readSignal = registeredTools.get("read")!.signal!;
-    const editSignal = registeredTools.get("edit")!.signal!;
-    registry.unregister("edit");
+    const readSignal = registeredTools.get("read_document")!.signal!;
+    const editSignal = registeredTools.get("edit_document")!.signal!;
+    registry.unregister("edit_document");
     expect(editSignal.aborted).toBe(true);
     expect(readSignal.aborted).toBe(false);
   });
 
-  it("read execute returns editor content", async () => {
+  it("get_editor_state execute returns the current mode", async () => {
     registerWebMCPTools(
       createToolRegistry(makeEditorCtx(), makeWorkspaceCtx(), skillsCtx),
     );
-    expect(await registeredTools.get("read")!.execute({})).toBe(
-      "editor content",
+    const state = JSON.parse(
+      (await registeredTools.get("get_editor_state")!.execute({})) as string,
     );
+    expect(state.mode).toBe("editor");
   });
 
-  it("get_current_mode execute returns current mode", async () => {
+  it("declares annotations derived from scope and content trust", () => {
     registerWebMCPTools(
       createToolRegistry(makeEditorCtx(), makeWorkspaceCtx(), skillsCtx),
     );
-    expect(await registeredTools.get("get_current_mode")!.execute({})).toBe(
-      "editor",
+    expect(registeredTools.get("read_document")!.annotations).toEqual({
+      readOnlyHint: true,
+      untrustedContentHint: true,
+    });
+    expect(registeredTools.get("edit_document")!.annotations).toEqual({
+      readOnlyHint: false,
+    });
+    expect(registeredTools.get("delete_document")!.annotations).toEqual({
+      readOnlyHint: false,
+      consequentialHint: true,
+      untrustedContentHint: true,
+    });
+  });
+
+  it("resolves a structured error instead of rejecting when a tool throws", async () => {
+    const registry = createToolRegistry(
+      makeEditorCtx(),
+      makeWorkspaceCtx(),
+      skillsCtx,
     );
+    registry.register(
+      makeReadTool("broken_tool", () => Promise.reject(new Error("boom"))),
+    );
+    const log = new ToolActivityLog();
+    const finishSpy = vi.spyOn(log, "finishCall");
+    registerWebMCPTools(registry, log);
+
+    const result = await registeredTools.get("broken_tool")!.execute({});
+    expect(JSON.parse(result as string)).toEqual({
+      error: "boom",
+      code: "TOOL_FAILED",
+      retryable: false,
+    });
+    expect(finishSpy).toHaveBeenCalledWith(expect.any(String), {
+      ok: false,
+      error: "boom",
+    });
+  });
+
+  it("logs a structured error result as a failed call", async () => {
+    const registry = createToolRegistry(
+      makeEditorCtx(),
+      makeWorkspaceCtx(),
+      skillsCtx,
+    );
+    registry.register(
+      makeReadTool("soft_fail", () =>
+        Promise.resolve(JSON.stringify({ error: "nope", code: "NOT_FOUND" })),
+      ),
+    );
+    const log = new ToolActivityLog();
+    const finishSpy = vi.spyOn(log, "finishCall");
+    registerWebMCPTools(registry, log);
+
+    await registeredTools.get("soft_fail")!.execute({});
+    expect(finishSpy).toHaveBeenCalledWith(expect.any(String), {
+      ok: false,
+      error: "nope",
+    });
+  });
+
+  it("skips a tool that fails to register after others succeeded", () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (document as any).modelContext = {
+      registerTool: vi.fn((tool: CapturedTool) => {
+        if (tool.name === "read_skill") throw new TypeError("name clash");
+        registeredTools.set(tool.name, tool);
+      }),
+    };
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    registerWebMCPTools(
+      createToolRegistry(makeEditorCtx(), makeWorkspaceCtx(), skillsCtx),
+    );
+    expect(registeredTools.has("read_skill")).toBe(false);
+    expect(registeredTools.has("list_skills")).toBe(true);
+    expect(registeredTools.has("delete_document")).toBe(true);
+    warnSpy.mockRestore();
   });
 
   it("calls client.reportProgress when tool call triggers events", async () => {

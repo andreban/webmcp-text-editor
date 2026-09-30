@@ -10,7 +10,8 @@ import type {
   ToolProvider,
 } from "@mast-ai/core";
 import type { AgentRunnerFactory } from "../../";
-import { loadSkills } from "../../../skills";
+import { findSkillByName, type SkillsContext } from "../skills/context";
+import { toolError } from "../errors";
 
 type RunBuilderLike = {
   forwardTo(parentContext: ToolContext): RunBuilderLike;
@@ -32,6 +33,7 @@ export class DelegateToSkillTool implements Tool<DelegateToSkillArgs, string> {
   constructor(
     private factory: AgentRunnerFactory,
     private readonlyRegistry: ToolProvider,
+    private skillsCtx: SkillsContext,
     runnerFactory?: (registry: ToolProvider, model?: string) => RunnerLike,
   ) {
     this.runnerFactory =
@@ -43,18 +45,17 @@ export class DelegateToSkillTool implements Tool<DelegateToSkillArgs, string> {
     return {
       name: "delegate_to_skill",
       description:
-        "Delegates a task to a named skill (sub-agent). The skill runs with read-only access and returns its response as a string. Interpret the response and act on it accordingly.",
+        "Runs one of the user's saved skills on a task and returns its answer without changing any documents. Use when a skill from list_skills fits the request, then apply any suggested changes yourself with edit_document.",
       parameters: {
         type: "object",
         properties: {
           skillName: {
             type: "string",
-            description: "The exact name of the skill to invoke.",
+            description: "The skill's name, case-insensitive.",
           },
           task: {
             type: "string",
-            description:
-              "The specific task or instructions to pass to the skill.",
+            description: "What the skill should do, in the user's terms.",
           },
         },
         required: ["skillName", "task"],
@@ -67,11 +68,13 @@ export class DelegateToSkillTool implements Tool<DelegateToSkillArgs, string> {
     { skillName, task }: DelegateToSkillArgs,
     context: ToolContext,
   ): Promise<string> {
-    const skills = loadSkills();
-    const skill = skills.find((s) => s.name === skillName);
+    const skills = this.skillsCtx.skillsRef.current;
+    const skill = findSkillByName(skills, skillName ?? "");
     if (!skill) {
       const names = skills.map((s) => s.name).join(", ");
-      return `Error: skill "${skillName}" not found. Available skills: ${names || "none"}`;
+      return toolError(`Skill "${skillName}" not found.`, "NOT_FOUND", {
+        suggestion: `Available skills: ${names || "none"}.`,
+      });
     }
 
     const readonlyToolNames = this.readonlyRegistry
